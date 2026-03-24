@@ -57,6 +57,9 @@ type Task struct {
 	// Phase 6: Log Management
 	MaxLogEntries int `json:"max_log_entries,omitempty"`
 
+	// Runtime state
+	Executing bool `json:"executing"`
+
 	logs   []LogEntry
 	timer  *time.Timer
 	ticker *time.Ticker
@@ -488,6 +491,10 @@ func runTaskOnce(t *Task) {
 		return
 	}
 
+	mu.Lock()
+	t.Executing = true
+	mu.Unlock()
+
 	start := time.Now()
 
 	// Configurable timeout (default: 2 minutes)
@@ -541,6 +548,7 @@ func runTaskOnce(t *Task) {
 	durationMs := finished.Sub(start).Milliseconds()
 
 	mu.Lock()
+	t.Executing = false
 	t.LastRunAt = finished.UnixMilli()
 	t.LastResult = &Result{Success: success, Message: msg}
 	t.logs = append([]LogEntry{{Time: t.LastRunAt, DurationMs: durationMs, Success: success, Message: msg}}, t.logs...)
