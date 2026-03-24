@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -508,18 +509,30 @@ func runTaskOnce(t *Task) {
 		}
 	}
 
-	out, err := cmd.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
 	finished := time.Now()
 	success := err == nil && ctx.Err() == nil
-	msg := strings.TrimSpace(string(out))
-	if msg == "" {
-		if ctx.Err() == context.DeadlineExceeded {
-			msg = fmt.Sprintf("Timeout after %ds", t.TimeoutSec)
-		} else if err != nil {
-			msg = err.Error()
-		} else {
+
+	var msg string
+	if success {
+		msg = strings.TrimSpace(stdout.String())
+		if msg == "" {
 			msg = "Execution completed"
 		}
+	} else {
+		// On failure, combine stdout + stderr for full context
+		combined := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
+		if combined == "" || combined == "\n" {
+			if ctx.Err() == context.DeadlineExceeded {
+				combined = fmt.Sprintf("Timeout after %ds", t.TimeoutSec)
+			} else if err != nil {
+				combined = err.Error()
+			}
+		}
+		msg = strings.TrimSpace(combined)
 	}
 	if len(msg) > 4000 {
 		msg = msg[:4000] + "..."
@@ -1029,9 +1042,9 @@ type taskTemplate struct {
 
 var builtinTemplates = []taskTemplate{
 	{
-		ID: "backup-home", Name: "Home Directory Backup",
-		Description: "Archive home directory to /DATA/backups/",
-		Command:     "mkdir -p /DATA/backups && tar -czf /DATA/backups/home_$(date +%Y%m%d_%H%M%S).tar.gz /home/",
+		ID: "backup-appdata", Name: "AppData Backup",
+		Description: "Archive /DATA/AppData to /DATA/backups/",
+		Command:     "mkdir -p /DATA/backups && tar -czf /DATA/backups/appdata_$(date +%Y%m%d_%H%M%S).tar.gz -C /DATA AppData",
 		Type: "cron", CronExpr: "0 2 * * *",
 		Category: "backup", TimeoutSec: 600,
 	},
