@@ -1,0 +1,25 @@
+# Binaries (local build artifacts, not the distributed one)
+zima-cron
+zima_cron
+!raw/usr/bin/zima-cron
+
+# Packages
+*.raw
+
+# Temp files
+*.tmp
+tasks.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+/tmp/

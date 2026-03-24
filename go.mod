@@ -1,6 +1,8 @@
-module github.com/LinkLeong/zima_cron
+module github.com/chicohaager/zima_cron
 
-go 1.20
+go 1.21
+
+toolchain go1.22.2
 
 require github.com/IceWhaleTech/CasaOS-Common v0.4.16
 
