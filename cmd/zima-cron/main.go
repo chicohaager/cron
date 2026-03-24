@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -63,6 +65,7 @@ type Task struct {
 	logs   []LogEntry
 	timer  *time.Timer
 	ticker *time.Ticker
+	done   chan struct{}
 }
 
 type Result struct {
@@ -79,6 +82,8 @@ type LogEntry struct {
 const (
 	defaultStoragePath = "/DATA/AppData/zima_cron"
 	version            = "0.2.0"
+	maxRequestBody     = 1 << 20 // 1 MB
+	maxTasks           = 500
 )
 
 var (
@@ -86,6 +91,7 @@ var (
 	mu        sync.Mutex
 	store     storage.Storage
 	startTime = time.Now()
+	execSem   = make(chan struct{}, 10) // max 10 concurrent executions
 )
 
 func installWatchdog() {
@@ -201,8 +207,9 @@ func main() {
 func withCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -215,9 +222,21 @@ func withLogging(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		log.Printf("[REQ] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		// Apply body size limit to all mutating requests
+		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		}
 		h(w, r)
 		log.Printf("[RES] %s %s took %v", r.Method, r.URL.Path, time.Since(start))
 	}
+}
+
+func newTaskID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 10) // fallback
+	}
+	return hex.EncodeToString(b)
 }
 
 type createReq struct {
@@ -258,6 +277,13 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
+		mu.Lock()
+		taskCount := len(tasks)
+		mu.Unlock()
+		if taskCount >= maxTasks {
+			http.Error(w, fmt.Sprintf("task limit reached (%d)", maxTasks), 429)
+			return
+		}
 		var req createReq
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -271,7 +297,14 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid type", 400)
 			return
 		}
-		id := strconv.FormatInt(time.Now().UnixNano(), 10)
+		// Validate notification configs
+		for _, n := range req.Notifications {
+			if n.Type != "webhook" && n.Type != "email" && n.Type != "telegram" {
+				http.Error(w, "invalid notification type: "+n.Type, 400)
+				return
+			}
+		}
+		id := newTaskID()
 		t := &Task{
 			ID: id, Name: req.Name, Command: req.Command, Type: req.Type,
 			Status: "running", CronExpr: "",
@@ -405,12 +438,17 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s_logs.csv", id))
 				fmt.Fprintln(w, "time,duration_ms,success,message")
 				for _, l := range logs {
-					msg := strings.ReplaceAll(l.Message, "\"", "\"\"")
-				// Sanitize CSV injection: prefix dangerous characters with single quote
-				if len(msg) > 0 && (msg[0] == '=' || msg[0] == '+' || msg[0] == '-' || msg[0] == '@') {
-					msg = "'" + msg
-				}
-				fmt.Fprintf(w, "%d,%d,%t,\"%s\"\n", l.Time, l.DurationMs, l.Success, msg)
+					msg := l.Message
+					// Strip newlines to prevent CSV cell breakout
+					msg = strings.ReplaceAll(msg, "\r", " ")
+					msg = strings.ReplaceAll(msg, "\n", " ")
+					msg = strings.ReplaceAll(msg, "\t", " ")
+					msg = strings.ReplaceAll(msg, "\"", "\"\"")
+					// Sanitize CSV injection: prefix dangerous characters with single quote
+					if len(msg) > 0 && (msg[0] == '=' || msg[0] == '+' || msg[0] == '-' || msg[0] == '@' || msg[0] == '|') {
+						msg = "'" + msg
+					}
+					fmt.Fprintf(w, "%d,%d,%t,\"%s\"\n", l.Time, l.DurationMs, l.Success, msg)
 				}
 			} else {
 				json.NewEncoder(w).Encode(logs)
@@ -433,6 +471,21 @@ func sanitizeTask(t *Task) *Task {
 	cp.logs = nil
 	cp.ticker = nil
 	cp.timer = nil
+	cp.done = nil
+	// Mask sensitive fields in notification configs
+	if len(cp.Notifications) > 0 {
+		masked := make([]notify.Config, len(cp.Notifications))
+		copy(masked, cp.Notifications)
+		for i := range masked {
+			if masked[i].SMTPPass != "" {
+				masked[i].SMTPPass = "********"
+			}
+			if masked[i].TelegramBotToken != "" {
+				masked[i].TelegramBotToken = "********"
+			}
+		}
+		cp.Notifications = masked
+	}
 	return &cp
 }
 
@@ -440,25 +493,35 @@ func startSchedule(t *Task) {
 	clearSchedule(t)
 	if t.Type == "interval" {
 		t.ticker = time.NewTicker(t.Interval)
+		t.done = make(chan struct{})
 		t.NextRunAt = time.Now().Add(t.Interval).UnixMilli()
-		go func(id string) {
-			for range t.ticker.C {
-				mu.Lock()
-				tt := tasks[id]
-				mu.Unlock()
-				if tt == nil || tt.Status != "running" {
-					continue
+		go func(id string, done <-chan struct{}) {
+			for {
+				select {
+				case <-done:
+					return
+				case <-t.ticker.C:
+					mu.Lock()
+					tt := tasks[id]
+					mu.Unlock()
+					if tt == nil || tt.Status != "running" {
+						continue
+					}
+					runTaskOnce(tt)
+					tt.NextRunAt = time.Now().Add(tt.Interval).UnixMilli()
 				}
-				runTaskOnce(tt)
-				tt.NextRunAt = time.Now().Add(tt.Interval).UnixMilli()
 			}
-		}(t.ID)
+		}(t.ID, t.done)
 	} else {
 		scheduleCronNext(t)
 	}
 }
 
 func clearSchedule(t *Task) {
+	if t.done != nil {
+		close(t.done)
+		t.done = nil
+	}
 	if t.ticker != nil {
 		t.ticker.Stop()
 		t.ticker = nil
@@ -481,6 +544,10 @@ func toggleTask(t *Task) {
 }
 
 func runTaskOnce(t *Task) {
+	// Concurrency limit: block if too many tasks are running
+	execSem <- struct{}{}
+	defer func() { <-execSem }()
+
 	// Check dependencies before running
 	if !canRun(t) {
 		log.Printf("[zima-cron] Task %s skipped: dependencies not met", t.ID)
@@ -961,16 +1028,21 @@ func importHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON: "+err.Error(), 400)
 		return
 	}
+	mu.Lock()
+	remaining := maxTasks - len(tasks)
+	mu.Unlock()
+	if len(imported) > remaining {
+		imported = imported[:remaining]
+	}
 	created := 0
-	baseID := time.Now().UnixNano()
-	for i, req := range imported {
+	for _, req := range imported {
 		if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Command) == "" {
 			continue
 		}
 		if req.Type != "interval" && req.Type != "cron" {
 			continue
 		}
-		id := strconv.FormatInt(baseID+int64(i), 10)
+		id := newTaskID()
 		t := &Task{
 			ID: id, Name: req.Name, Command: req.Command, Type: req.Type,
 			Status: "paused", CronExpr: req.CronExpr,

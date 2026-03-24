@@ -129,12 +129,19 @@ func sendEmail(cfg Config, task TaskInfo, result ResultInfo) error {
 		status = "SUCCESS"
 	}
 
-	subject := fmt.Sprintf("[zima-cron] %s: %s", status, task.Name)
+	// Sanitize header values to prevent email header injection
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+		return s
+	}
+	subject := sanitize(fmt.Sprintf("[zima-cron] %s: %s", status, task.Name))
+	from = sanitize(from)
 	body := buildEmailBody(task, result, status)
 
 	msg := strings.Join([]string{
 		"From: " + from,
-		"To: " + cfg.Target,
+		"To: " + sanitize(cfg.Target),
 		"Subject: " + subject,
 		"MIME-Version: 1.0",
 		"Content-Type: text/html; charset=UTF-8",
