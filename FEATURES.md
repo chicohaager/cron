@@ -35,10 +35,11 @@ Each task can define its own execution timeout, retry behavior, and environment 
 
 Retries execute automatically after failure. Notifications only fire after the final attempt.
 
-### 3. Webhook Notifications
+### 3. Notifications (Webhook, Email, Telegram)
 
-Get notified when tasks succeed or fail. Configure per task.
+Get notified when tasks succeed or fail. Three notification channels available:
 
+**Per-task Webhook & Email:**
 ```json
 {
   "notifications": [{
@@ -47,9 +48,25 @@ Get notified when tasks succeed or fail. Configure per task.
     "target": "https://your-webhook.example.com/hook",
     "on_success": false,
     "on_failure": true
+  }, {
+    "enabled": true,
+    "type": "email",
+    "target": "admin@example.com",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "smtp_user": "user@gmail.com",
+    "smtp_pass": "app-password",
+    "on_success": false,
+    "on_failure": true
   }]
 }
 ```
+
+**Global Telegram Notifications:**
+
+Configure once in Settings (gear icon), applies to all tasks:
+- `PUT /zima_cron/settings` — set bot token, chat ID, trigger conditions
+- `POST /zima_cron/settings/test-telegram` — send a test message
 
 **Webhook payload:**
 ```json
@@ -116,7 +133,56 @@ Full validation of 5-field cron expressions with field-level error messages.
 
 **Frontend:** Real-time validation as you type, showing the next 5 execution times for valid expressions.
 
-### 8. API Improvements
+### 8. Live Execution Indicator
+
+When a task is running, the UI shows a **pulsing blue dot** with a glow animation and "Executing..." status text. The frontend auto-polls every 2 seconds while any task is active, then stops polling when all tasks are idle.
+
+The `executing` boolean field is included in the task JSON response.
+
+### 9. Task Templates
+
+Pre-built templates for common tasks, accessible via the "Start from Template" dropdown:
+
+| Template | Description |
+|----------|-------------|
+| AppData Backup | Archive `/DATA/AppData` to `/DATA/backups/` |
+| Cleanup Temp Files | Remove files older than 7 days from `/tmp` |
+| System Health Check | Disk, memory, and load average |
+| Docker Cleanup | Prune unused images, containers, volumes |
+| System Update Check | Show OS and kernel info |
+| SSL Certificate Check | Check certificate expiry |
+| Docker Container Status | List containers with resource usage |
+
+Templates pre-fill the task creation form. Customize before creating.
+
+### 10. Global Settings
+
+Configure global notification settings via the Settings panel (gear icon in header):
+
+- Telegram Bot Token and Chat ID
+- Global on-success / on-failure triggers
+- Test button to verify Telegram connectivity
+
+Settings are persisted to `/DATA/AppData/zima_cron/settings.json`.
+
+### 11. Sysext Watchdog Timer
+
+ZimaOS uses systemd-sysext which stops services during refresh. A watchdog timer is auto-installed to `/etc/systemd/system/` on first start:
+
+- Checks every 30 seconds if zima-cron is running
+- Starts it automatically if stopped (e.g., after sysext refresh)
+- Survives sysext refresh because `/etc/` is persistent
+- First check 45 seconds after boot (gateway needs ~45s to register routes)
+
+### 12. Async Gateway Registration
+
+The HTTP server starts immediately without waiting for the CasaOS gateway. Gateway route registration happens in the background with 60 retry attempts (2s interval). This prevents startup deadlocks when running inside a sysext package.
+
+### 13. Clean Output Handling
+
+On successful execution (exit code 0), only stdout is captured as the log message. stderr noise (e.g., `tar: Removing leading '/'`) is discarded. On failure, both stdout and stderr are combined for full diagnostic context.
+
+### 14. API Improvements
 
 **Bulk operations** — act on multiple tasks at once:
 - `POST /tasks/bulk/run` — trigger execution
@@ -130,6 +196,14 @@ Full validation of 5-field cron expressions with field-level error messages.
 **Health endpoint** — for monitoring tools:
 - `GET /health` — returns status, version, uptime, task counts
 
+**Templates:**
+- `GET /templates` — list available task templates
+
+**Settings:**
+- `GET /settings` — get global settings (Telegram config)
+- `PUT /settings` — update global settings
+- `POST /settings/test-telegram` — send test Telegram message
+
 ---
 
 ## Installation
@@ -137,31 +211,26 @@ Full validation of 5-field cron expressions with field-level error messages.
 ### From Release (ZimaOS)
 
 1. Download `zima_cron.raw` from the releases page
-2. Copy to your ZimaOS device:
+2. Install via zpkg:
    ```bash
-   scp zima_cron.raw user@zimaos:/path/to/extensions/
+   scp zima_cron.raw root@zimaos:/tmp/
+   ssh root@zimaos 'zpkg remove zima_cron; zpkg install /tmp/zima_cron.raw && systemctl start zima-cron'
    ```
-3. Merge the system extension:
-   ```bash
-   sudo systemd-sysext merge
-   ```
-4. Start the service:
-   ```bash
-   sudo systemctl start zima-cron
-   sudo systemctl enable zima-cron
-   ```
+3. The watchdog timer auto-installs on first start and ensures the service stays running.
 
 ### Build from Source
 
 ```bash
-# Clone
 git clone https://github.com/chicohaager/zima_cron.git
 cd zima_cron
 
-# Build binary
-GOOS=linux GOARCH=amd64 go build -o raw/usr/bin/zima-cron ./cmd/zima-cron
+# Build .raw package (requires Go 1.21+ and squashfs-tools)
+./build.sh amd64
+```
 
-# Build zpkg (requires squashfs-tools)
+Or manually:
+```bash
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o raw/usr/bin/zima-cron ./cmd/zima-cron
 mksquashfs raw/ zima_cron.raw -noappend -comp gzip
 ```
 
@@ -342,6 +411,31 @@ curl http://zimaos/zima_cron/health
 
 Use this with Uptime Kuma, Zabbix, or any HTTP health checker.
 
+### Templates
+
+```bash
+curl http://zimaos/zima_cron/templates
+```
+
+Returns a list of pre-built task templates that can be used to pre-fill the creation form.
+
+### Settings
+
+```bash
+# Get current settings
+curl http://zimaos/zima_cron/settings
+
+# Update Telegram config
+curl -X PUT http://zimaos/zima_cron/settings \
+  -H "Content-Type: application/json" \
+  -d '{"telegram_bot_token": "123:ABC", "telegram_chat_id": "-100123", "telegram_on_failure": true}'
+
+# Test Telegram
+curl -X POST http://zimaos/zima_cron/settings/test-telegram \
+  -H "Content-Type: application/json" \
+  -d '{"bot_token": "123:ABC", "chat_id": "-100123"}'
+```
+
 ---
 
 ## Configuration
@@ -350,7 +444,7 @@ Use this with Uptime Kuma, Zabbix, or any HTTP health checker.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ZIMA_CRON_DATA_PATH` | `/DATA/AppData/zima_cron` | Storage directory for tasks.json |
+| `ZIMA_CRON_DATA_PATH` | `/DATA/AppData/zima_cron` | Storage directory for tasks.json and settings.json |
 | `CASAOS_RUNTIME_PATH` | (system default) | CasaOS gateway runtime path |
 
 ### Data Files
@@ -358,6 +452,7 @@ Use this with Uptime Kuma, Zabbix, or any HTTP health checker.
 ```
 /DATA/AppData/zima_cron/
   tasks.json          # All task definitions and state
+  settings.json       # Global settings (Telegram config)
 ```
 
 ---

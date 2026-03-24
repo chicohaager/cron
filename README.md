@@ -6,16 +6,21 @@ A lightweight, professional task scheduler for [ZimaOS](https://www.zimaos.com/)
 
 - **Interval & Cron Scheduling** — run commands every N minutes or via 5-field cron expressions
 - **Persistent Storage** — tasks survive reboots (JSON file with atomic writes)
+- **Live Execution Indicator** — pulsing blue dot shows active task execution in real-time
 - **Configurable Timeouts & Retries** — per-task timeout, automatic retry on failure
 - **Environment Variables** — inject custom env vars into task commands
-- **Webhook Notifications** — get notified on success/failure via any HTTP endpoint
+- **Notifications** — Webhook, Email (SMTP), and global Telegram notifications
 - **Categories, Tags & Priority** — organize and filter tasks
 - **Task Dependencies** — skip execution when upstream tasks haven't succeeded
 - **Log Management** — per-task logs with rotation, search, CSV/JSON export
+- **Clean Output** — success shows stdout only, failure shows full stderr context
 - **Cron Validation** — real-time validation with next 5 execution times preview
+- **Task Templates** — pre-built templates for backups, monitoring, Docker cleanup
 - **Bulk Operations** — run, pause, or delete multiple tasks at once
 - **Import/Export** — backup and restore all tasks as JSON
 - **Health Endpoint** — `GET /zima_cron/health` for monitoring tools (Uptime Kuma, Zabbix)
+- **Sysext Watchdog** — auto-restart after ZimaOS sysext refresh cycles
+- **Async Gateway** — HTTP server starts instantly, gateway registration in background
 - **Bilingual UI** — English and Chinese, switchable in the header
 
 ## Quick Start
@@ -23,10 +28,10 @@ A lightweight, professional task scheduler for [ZimaOS](https://www.zimaos.com/)
 ### Install on ZimaOS
 
 1. Download `zima_cron.raw` from [Releases](https://github.com/chicohaager/zima_cron/releases)
-2. Copy to your ZimaOS device and merge:
+2. Install via zpkg:
    ```bash
-   verschaffe dir einen codebase Überblick/to/extensions/
-   ssh user@zimaos "sudo systemd-sysext merge && sudo systemctl restart zima-cron"
+   scp zima_cron.raw root@zimaos:/tmp/
+   ssh root@zimaos 'zpkg remove zima_cron; zpkg install /tmp/zima_cron.raw && systemctl start zima-cron'
    ```
 3. Open the Scheduler module in the ZimaOS dashboard
 
@@ -36,11 +41,8 @@ A lightweight, professional task scheduler for [ZimaOS](https://www.zimaos.com/)
 git clone https://github.com/chicohaager/zima_cron.git
 cd zima_cron
 
-# Build binary
-GOOS=linux GOARCH=amd64 go build -o raw/usr/bin/zima-cron ./cmd/zima-cron
-
-# Build zpkg (requires squashfs-tools)
-mksquashfs raw/ zima_cron.raw -noappend -comp gzip
+# Build .raw package (requires Go 1.21+ and squashfs-tools)
+./build.sh amd64
 ```
 
 ### Local Development
@@ -69,6 +71,9 @@ go run ./cmd/zima-cron
 | `/zima_cron/import` | POST | Import tasks from JSON |
 | `/zima_cron/categories` | GET | List categories |
 | `/zima_cron/tags` | GET | List tags |
+| `/zima_cron/templates` | GET | List task templates |
+| `/zima_cron/settings` | GET/PUT | Global settings (Telegram) |
+| `/zima_cron/settings/test-telegram` | POST | Test Telegram config |
 | `/zima_cron/health` | GET | Health check |
 
 See [FEATURES.md](FEATURES.md) for the complete API reference with curl examples.
@@ -109,12 +114,13 @@ zima_cron/
     config/config.go           # CasaOS configuration
     service/service.go         # Gateway integration
     storage/storage.go         # JSON file persistence (atomic writes)
-    notify/notify.go           # Webhook notification dispatcher
+    notify/notify.go           # Webhook, email, and Telegram notifications
     cron/validate.go           # Cron expression validator
   raw/                         # ZimaOS system extension structure
     usr/bin/zima-cron           # Compiled binary
     usr/lib/systemd/system/     # Service file
     usr/share/casaos/           # Module config + web UI
+  build.sh                     # Build script (.raw package creation)
   test_deployment.sh           # 29-test deployment verification script
   FEATURES.md                  # Detailed feature docs & API reference
 ```
@@ -138,7 +144,7 @@ Runs 29 automated tests covering all features with automatic cleanup.
 
 ## Tech Stack
 
-- **Backend:** Go 1.20+ (net/http, no frameworks)
+- **Backend:** Go 1.21+ (net/http, no frameworks)
 - **Frontend:** Vanilla JavaScript, HTML, CSS (no frameworks)
 - **Storage:** JSON file with atomic writes
 - **Packaging:** systemd-sysext (squashfs `.raw`)
