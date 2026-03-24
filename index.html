@@ -3,33 +3,51 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Scheduler</title>
-    <link rel="stylesheet" href="styles.css">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title data-i18n="title">Scheduler</title>
+    <link rel="stylesheet" href="styles.css?v=0.2.1">
     <link rel="icon" type="image/svg+xml" href="favicon.svg" sizes="64x64">
   </head>
   <body>
     <header class="app-header">
-      <h1>Scheduler</h1>
+      <h1 data-i18n="header">Scheduler</h1>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+        <button id="settingsToggle" class="theme-btn" title="Settings" aria-label="Settings">&#9881;</button>
+        <button id="themeToggle" class="theme-btn" title="Toggle theme">&#9790;</button>
+        <label class="muted" for="langSelect" data-i18n="lang">Language</label>
+        <select id="langSelect">
+          <option value="en" selected>English</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
     </header>
     <main class="app-main">
       <section class="content">
         <div class="card">
           <div class="list-header">
-            <h2>Task List</h2>
+            <h2 data-i18n="taskList">Task List</h2>
             <div class="list-actions">
-              <button id="runAllBtn">Run All Once</button>
-              <button id="openCreateModalBtn" class="primary">New Task</button>
+              <button id="runAllBtn" data-i18n="runAll">Run All Once</button>
+              <button id="openCreateModalBtn" class="primary" data-i18n="newTask">New Task</button>
             </div>
+          </div>
+          <div class="filter-bar">
+            <select id="filterCategory">
+              <option value="" data-i18n-opt="filterAll">All Categories</option>
+            </select>
+            <select id="filterTag">
+              <option value="" data-i18n-opt="filterAllTags">All Tags</option>
+            </select>
           </div>
           <table class="tasks-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Command</th>
-                <th>Status</th>
-                <th>Next Run</th>
-                <th>Last Result</th>
-                <th>Actions</th>
+                <th data-i18n="colName">Name</th>
+                <th data-i18n="colCmd">Command</th>
+                <th data-i18n="colStatus">Status</th>
+                <th data-i18n="colNext">Next Run</th>
+                <th data-i18n="colLast">Last Result</th>
+                <th data-i18n="colActions">Actions</th>
               </tr>
             </thead>
             <tbody id="taskTableBody"></tbody>
@@ -39,36 +57,145 @@
     </main>
     <div class="modal-overlay" id="createTaskModal">
       <div class="modal">
-        <h3>Create Task</h3>
+        <h3 data-i18n="createTitle">Create Task</h3>
+        <div class="modal-body">
         <div class="form-row">
-          <label for="taskNameInput">Task Name</label>
-          <input id="taskNameInput" type="text" placeholder="e.g., Daily Backup">
+          <label for="templateSelect" data-i18n="template">Start from Template</label>
+          <select id="templateSelect">
+            <option value="" data-i18n-opt="noTemplate">-- Blank Task --</option>
+          </select>
         </div>
         <div class="form-row">
-          <label for="commandInput">Command</label>
-          <textarea id="commandInput" rows="3" placeholder="e.g., bash /path/to/script.sh"></textarea>
+          <label for="taskNameInput" data-i18n="name">Task Name</label>
+          <input id="taskNameInput" type="text" placeholder="e.g., Daily Backup" data-i18n-ph="phName">
         </div>
         <div class="form-row">
-          <label for="scheduleTypeSelect">Schedule Type</label>
+          <label for="commandInput" data-i18n="cmd">Command</label>
+          <textarea id="commandInput" rows="3" placeholder="e.g., bash /path/to/script.sh" data-i18n-ph="phCmd"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="scheduleTypeSelect" data-i18n="plan">Schedule Type</label>
           <select id="scheduleTypeSelect">
-            <option value="interval">Interval (minutes)</option>
-            <option value="cron">Cron Expression</option>
+            <option value="interval" data-i18n-opt="optInterval">Interval (minutes)</option>
+            <option value="cron" data-i18n-opt="optCron">Cron Expression</option>
           </select>
         </div>
         <div class="form-row" id="rowInterval">
-          <label for="intervalInput">Interval (minutes)</label>
-          <input id="intervalInput" type="number" min="1" step="1" placeholder="e.g., 60">
+          <label for="intervalInput" data-i18n="interval">Interval (minutes)</label>
+          <input id="intervalInput" type="number" min="1" step="1" placeholder="e.g., 60" data-i18n-ph="phInterval">
         </div>
         <div class="form-row hidden" id="rowCron">
-          <label for="cronInput">Cron Expression</label>
-          <input id="cronInput" type="text" placeholder="e.g., */5 * * * *">
+          <label for="cronInput" data-i18n="cron">Cron Expression</label>
+          <input id="cronInput" type="text" placeholder="e.g., */5 * * * *" data-i18n-ph="phCron">
+          <div id="cronFeedback" class="cron-feedback"></div>
+        </div>
+        <div class="form-row">
+          <label for="categoryInput" data-i18n="category">Category</label>
+          <input id="categoryInput" type="text" list="categoryList" placeholder="e.g., backup" data-i18n-ph="phCategory">
+          <datalist id="categoryList"></datalist>
+        </div>
+        <div class="form-row">
+          <label for="tagsInput" data-i18n="tags">Tags (comma-separated)</label>
+          <input id="tagsInput" type="text" placeholder="e.g., critical, daily" data-i18n-ph="phTags">
+        </div>
+        <div class="form-row">
+          <label for="priorityInput" data-i18n="priority">Priority (1-10)</label>
+          <input id="priorityInput" type="number" min="1" max="10" step="1" placeholder="5" data-i18n-ph="phPriority">
+        </div>
+        <details class="advanced-toggle">
+          <summary data-i18n="advancedOptions">Advanced Options</summary>
+          <div class="form-row">
+            <label for="timeoutInput" data-i18n="timeout">Timeout (seconds)</label>
+            <input id="timeoutInput" type="number" min="0" step="1" placeholder="120" data-i18n-ph="phTimeout">
+          </div>
+          <div class="form-row">
+            <label for="retryCountInput" data-i18n="retryCount">Retry Count</label>
+            <input id="retryCountInput" type="number" min="0" max="10" step="1" placeholder="0" data-i18n-ph="phRetryCount">
+          </div>
+          <div class="form-row">
+            <label for="retryDelayInput" data-i18n="retryDelay">Retry Delay (seconds)</label>
+            <input id="retryDelayInput" type="number" min="0" step="1" placeholder="10" data-i18n-ph="phRetryDelay">
+          </div>
+          <div class="form-row">
+            <label data-i18n="envVars">Environment Variables</label>
+            <div id="envContainer"></div>
+            <button type="button" id="addEnvBtn" data-i18n="addEnv">+ Add Variable</button>
+          </div>
+          <div class="form-row">
+            <label for="maxLogEntriesInput" data-i18n="maxLogEntries">Max Log Entries</label>
+            <input id="maxLogEntriesInput" type="number" min="1" max="10000" step="1" placeholder="100" data-i18n-ph="phMaxLogs">
+          </div>
+          <div class="form-row">
+            <label data-i18n="dependsOn">Depends On</label>
+            <select id="dependsOnSelect" multiple size="3"></select>
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="allowParallelCheck"> <span data-i18n="allowParallel">Allow parallel execution</span></label>
+            </div>
+          </div>
+          <div class="form-row">
+            <label data-i18n="webhookLabel">Webhook Notification</label>
+            <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" data-i18n-ph="phWebhookUrl">
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="notifyOnSuccess"> <span data-i18n="onSuccess">On Success</span></label>
+              <label><input type="checkbox" id="notifyOnFailure" checked> <span data-i18n="onFailure">On Failure</span></label>
+            </div>
+          </div>
+          <div class="form-row">
+            <label data-i18n="emailLabel">Email Notification (SMTP)</label>
+            <input id="emailToInput" type="email" placeholder="recipient@example.com" data-i18n-ph="phEmailTo">
+            <div class="smtp-grid">
+              <input id="smtpHostInput" type="text" placeholder="smtp.gmail.com">
+              <input id="smtpPortInput" type="number" placeholder="587" min="1" max="65535">
+            </div>
+            <div class="smtp-grid">
+              <input id="smtpUserInput" type="text" placeholder="user@gmail.com">
+              <input id="smtpPassInput" type="password" placeholder="app password">
+            </div>
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="emailOnSuccess"> <span data-i18n="onSuccess">On Success</span></label>
+              <label><input type="checkbox" id="emailOnFailure" checked> <span data-i18n="onFailure">On Failure</span></label>
+            </div>
+          </div>
+        </details>
         </div>
         <div class="modal-actions">
-          <button id="cancelCreateBtn">Cancel</button>
-          <button id="createTaskBtn" class="primary">Create</button>
+          <button id="cancelCreateBtn" data-i18n="cancel">Cancel</button>
+          <button id="createTaskBtn" class="primary" data-i18n="create">Create</button>
         </div>
       </div>
     </div>
-    <script src="app.js"></script>
+    <div class="modal-overlay" id="settingsModal">
+      <div class="modal">
+        <h3 data-i18n="settingsTitle">Settings</h3>
+        <div class="modal-body">
+          <p class="muted" style="font-size:12px;margin:0 0 12px" data-i18n="settingsDesc">Configure global notification settings. Telegram notifications apply to all tasks.</p>
+          <div class="form-row">
+            <label for="tgBotToken" data-i18n="tgBotToken">Telegram Bot Token</label>
+            <div class="input-masked-wrap">
+              <input id="tgBotToken" type="password" placeholder="123456:ABC-DEF..." autocomplete="off">
+              <button type="button" id="tgTokenReveal" class="reveal-btn" title="Show/hide">&#128065;</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label for="tgChatId" data-i18n="tgChatId">Telegram Chat ID</label>
+            <input id="tgChatId" type="text" placeholder="-1001234567890">
+          </div>
+          <div class="form-row">
+            <div class="checkbox-row">
+              <label><input type="checkbox" id="tgNotifySuccess"> <span data-i18n="onSuccess">On Success</span></label>
+              <label><input type="checkbox" id="tgNotifyFailure" checked> <span data-i18n="onFailure">On Failure</span></label>
+            </div>
+          </div>
+          <div id="tgTestResult"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="tgTestBtn" style="margin-right:auto" data-i18n="tgTest">Test</button>
+          <button id="settingsCancelBtn" data-i18n="cancel">Cancel</button>
+          <button id="settingsSaveBtn" class="primary" data-i18n="save">Save</button>
+        </div>
+      </div>
+    </div>
+    <script>window.API_BASE=''</script>
+    <script src="app.js?v=0.2.1"></script>
   </body>
   </html>
