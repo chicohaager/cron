@@ -1,12 +1,15 @@
 [Unit]
+Description=ZimaOS Cron Service
+After=local-fs.target
 After=casaos-gateway.service
 After=casaos-message-bus.service
 After=casaos-user-service.service
-Description=ZimaOS Cron Service
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/bin/zima-cron
 Restart=always
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
