@@ -1,6 +1,6 @@
 # Binaries (local build artifacts, not the distributed one)
-zima-cron
-zima_cron
+/zima-cron
+/zima_cron
 !raw/usr/bin/zima-cron
 
 # Packages
