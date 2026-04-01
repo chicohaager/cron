@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log"
+	"net"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -68,7 +71,7 @@ func Send(configs []Config, task TaskInfo, result ResultInfo) {
 		}
 		go func(cfg Config) {
 			if err := dispatch(cfg, task, result); err != nil {
-				log.Printf("[zima-cron] notification error (%s -> %s): %v", cfg.Type, cfg.Target, err)
+				log.Printf("[cron] notification error (%s -> %s): %v", cfg.Type, cfg.Target, err)
 			}
 		}(c)
 	}
@@ -89,7 +92,47 @@ func dispatch(cfg Config, task TaskInfo, result ResultInfo) error {
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
-func sendWebhook(url string, task TaskInfo, result ResultInfo) error {
+// isPrivateIP checks if an IP is in a private/reserved range (H1 SSRF protection).
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+		"127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7",
+	}
+	for _, cidr := range privateRanges {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateWebhookURL ensures the webhook URL is safe (H1 SSRF protection).
+func validateWebhookURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("webhook URL must use http or https scheme, got %q", parsed.Scheme)
+	}
+	host := parsed.Hostname()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve host %q: %w", host, err)
+	}
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("webhook URL resolves to private IP %s (blocked)", ip)
+		}
+	}
+	return nil
+}
+
+func sendWebhook(webhookURL string, task TaskInfo, result ResultInfo) error {
+	if err := validateWebhookURL(webhookURL); err != nil {
+		return fmt.Errorf("webhook validation: %w", err)
+	}
 	payload := webhookPayload{
 		Event:     "task_completed",
 		Task:      task,
@@ -100,13 +143,13 @@ func sendWebhook(url string, task TaskInfo, result ResultInfo) error {
 	if err != nil {
 		return fmt.Errorf("marshal payload: %w", err)
 	}
-	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
+	resp, err := httpClient.Post(webhookURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", url, err)
+		return fmt.Errorf("POST %s: %w", webhookURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("POST %s returned %d", url, resp.StatusCode)
+		return fmt.Errorf("POST %s returned %d", webhookURL, resp.StatusCode)
 	}
 	return nil
 }
@@ -135,7 +178,7 @@ func sendEmail(cfg Config, task TaskInfo, result ResultInfo) error {
 		s = strings.ReplaceAll(s, "\n", "")
 		return s
 	}
-	subject := sanitize(fmt.Sprintf("[zima-cron] %s: %s", status, task.Name))
+	subject := sanitize(fmt.Sprintf("[cron] %s: %s", status, task.Name))
 	from = sanitize(from)
 	body := buildEmailBody(task, result, status)
 
@@ -161,6 +204,7 @@ func sendEmail(cfg Config, task TaskInfo, result ResultInfo) error {
 	return nil
 }
 
+// sendTelegram uses HTML parse_mode for consistent formatting (H3).
 func sendTelegram(cfg Config, task TaskInfo, result ResultInfo) error {
 	if cfg.TelegramBotToken == "" || cfg.Target == "" {
 		return fmt.Errorf("telegram: bot_token and chat_id required")
@@ -171,27 +215,27 @@ func sendTelegram(cfg Config, task TaskInfo, result ResultInfo) error {
 		status = "SUCCESS"
 		emoji = "\u2705"
 	}
-	text := fmt.Sprintf("%s *%s — %s*\n\n`%s`\nDuration: %dms\n\n```\n%s\n```",
-		emoji, status, escapeMarkdown(task.Name),
-		escapeMarkdown(task.Command), result.DurationMs,
-		escapeMarkdown(result.Message))
+	text := fmt.Sprintf("%s <b>%s — %s</b>\n\n<code>%s</code>\nDuration: %dms\n\n<pre>%s</pre>",
+		emoji, status, html.EscapeString(task.Name),
+		html.EscapeString(task.Command), result.DurationMs,
+		html.EscapeString(result.Message))
 	return SendTelegramMessage(cfg.TelegramBotToken, cfg.Target, text)
 }
 
 // SendTelegramMessage sends a message via the Telegram Bot API.
 // Exported so it can be used for test messages.
 func SendTelegramMessage(botToken, chatID, text string) error {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
 	payload := map[string]string{
 		"chat_id":    chatID,
 		"text":       text,
-		"parse_mode": "Markdown",
+		"parse_mode": "HTML",
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("marshal telegram payload: %w", err)
 	}
-	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(body))
+	resp, err := httpClient.Post(apiURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("telegram API: %w", err)
 	}
@@ -206,11 +250,7 @@ func SendTelegramMessage(botToken, chatID, text string) error {
 	return nil
 }
 
-func escapeMarkdown(s string) string {
-	r := strings.NewReplacer("*", "\\*", "_", "\\_", "`", "\\`", "[", "\\[")
-	return r.Replace(s)
-}
-
+// buildEmailBody creates an HTML email with all values properly escaped (H2).
 func buildEmailBody(task TaskInfo, result ResultInfo, status string) string {
 	color := "#2ecc71"
 	if !result.Success {
@@ -226,9 +266,13 @@ func buildEmailBody(task TaskInfo, result ResultInfo, status string) string {
     <tr><td style="padding:8px 0;color:#93a1b5">Duration</td><td style="padding:8px 0">%dms</td></tr>
     <tr><td style="padding:8px 0;color:#93a1b5">Output</td><td style="padding:8px 0"><pre style="white-space:pre-wrap;margin:0">%s</pre></td></tr>
   </table>
-  <p style="color:#93a1b5;font-size:12px;margin:16px 0 0">zima-cron scheduler</p>
+  <p style="color:#93a1b5;font-size:12px;margin:16px 0 0">cron scheduler</p>
 </div>
 </body></html>`,
-		color, status+" — "+task.Name, task.Name, task.Command, result.DurationMs,
-		strings.ReplaceAll(result.Message, "<", "&lt;"))
+		color,
+		html.EscapeString(status+" — "+task.Name),
+		html.EscapeString(task.Name),
+		html.EscapeString(task.Command),
+		result.DurationMs,
+		html.EscapeString(result.Message))
 }

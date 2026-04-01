@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# zima_cron Deployment Test Script
+# cron Deployment Test Script
 # Tests all 8 feature phases against a live ZimaOS instance
 # Usage: ./test_deployment.sh [BASE_URL]
 # =============================================================================
@@ -8,7 +8,7 @@
 set +e
 
 BASE="${1:-http://192.168.50.27}"
-API="$BASE/zima_cron"
+API="$BASE/cron"
 
 PASS=0
 FAIL=0
@@ -51,7 +51,7 @@ get_task() {
 
 echo ""
 echo "============================================="
-echo " zima_cron Deployment Tests"
+echo " cron Deployment Tests"
 echo " Target: $BASE"
 echo "============================================="
 echo ""

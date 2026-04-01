@@ -1,4 +1,4 @@
-# zima_cron v0.2.0 — Feature List & How-To
+# cron v0.2.0 — Feature List & How-To
 
 A lightweight task scheduler for ZimaOS/CasaOS with professional features.
 
@@ -17,7 +17,7 @@ A lightweight task scheduler for ZimaOS/CasaOS with professional features.
 
 ### 1. Persistent Task Storage
 
-Tasks are saved to `/DATA/AppData/zima_cron/tasks.json` and survive service restarts. All writes use atomic file operations (write to `.tmp`, then rename) for crash safety.
+Tasks are saved to `/DATA/AppData/cron/tasks.json` and survive service restarts. All writes use atomic file operations (write to `.tmp`, then rename) for crash safety.
 
 - Auto-save on every create, update, delete, toggle, and run
 - Auto-load on startup with schedule restoration
@@ -65,8 +65,8 @@ Get notified when tasks succeed or fail. Three notification channels available:
 **Global Telegram Notifications:**
 
 Configure once in Settings (gear icon), applies to all tasks:
-- `PUT /zima_cron/settings` — set bot token, chat ID, trigger conditions
-- `POST /zima_cron/settings/test-telegram` — send a test message
+- `PUT /cron/settings` — set bot token, chat ID, trigger conditions
+- `POST /cron/settings/test-telegram` — send a test message
 
 **Webhook payload:**
 ```json
@@ -163,16 +163,16 @@ Configure global notification settings via the Settings panel (gear icon in head
 - Global on-success / on-failure triggers
 - Test button to verify Telegram connectivity
 
-Settings are persisted to `/DATA/AppData/zima_cron/settings.json`.
+Settings are persisted to `/DATA/AppData/cron/settings.json`.
 
 ### 11. Sysext Watchdog Timer
 
 ZimaOS uses systemd-sysext which stops services during refresh. A watchdog timer is auto-installed to `/etc/systemd/system/` on first start:
 
-- Checks every 30 seconds if zima-cron is running
-- Starts it automatically if stopped (e.g., after sysext refresh)
+- One-shot check 45 seconds after boot (gateway needs ~45s to register routes)
+- Starts cron automatically if not running after boot
 - Survives sysext refresh because `/etc/` is persistent
-- First check 45 seconds after boot (gateway needs ~45s to register routes)
+- No periodic polling — runs only once per boot to save resources
 
 ### 12. Async Gateway Registration
 
@@ -210,19 +210,19 @@ On successful execution (exit code 0), only stdout is captured as the log messag
 
 ### From Release (ZimaOS)
 
-1. Download `zima_cron.raw` from the releases page
+1. Download `cron.raw` from the releases page
 2. Install via zpkg:
    ```bash
-   scp zima_cron.raw root@zimaos:/tmp/
-   ssh root@zimaos 'zpkg remove zima_cron; zpkg install /tmp/zima_cron.raw && systemctl start zima-cron'
+   scp cron.raw root@zimaos:/tmp/
+   ssh root@zimaos 'zpkg remove cron; zpkg install /tmp/cron.raw && systemctl start cron'
    ```
-3. The watchdog timer auto-installs on first start and ensures the service stays running.
+3. The watchdog timer auto-installs on first start and ensures the service starts after boot.
 
 ### Build from Source
 
 ```bash
-git clone https://github.com/chicohaager/zima_cron.git
-cd zima_cron
+git clone https://github.com/chicohaager/cron.git
+cd cron
 
 # Build .raw package (requires Go 1.21+ and squashfs-tools)
 ./build.sh amd64
@@ -230,18 +230,18 @@ cd zima_cron
 
 Or manually:
 ```bash
-GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o raw/usr/bin/zima-cron ./cmd/zima-cron
-mksquashfs raw/ zima_cron.raw -noappend -comp gzip
+GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o raw/usr/bin/cron ./cmd/cron
+mksquashfs raw/ cron.raw -noappend -comp gzip
 ```
 
 ### Local Development
 
 ```bash
 # Set a local data path (avoids writing to /DATA/)
-export ZIMA_CRON_DATA_PATH=/tmp/zima_cron_data
+export CRON_DATA_PATH=/tmp/cron_data
 
 # Run (will fail gateway registration gracefully)
-go run ./cmd/zima-cron
+go run ./cmd/cron
 ```
 
 ---
@@ -283,7 +283,7 @@ go run ./cmd/zima-cron
 
 ## API Reference
 
-Base path: `/zima_cron`
+Base path: `/cron`
 
 ### Tasks
 
@@ -301,7 +301,7 @@ Base path: `/zima_cron`
 #### Create Task
 
 ```bash
-curl -X POST http://zimaos/zima_cron/tasks \
+curl -X POST http://zimaos/cron/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Daily Backup",
@@ -340,17 +340,17 @@ curl -X POST http://zimaos/zima_cron/tasks \
 
 ```bash
 # Run multiple tasks
-curl -X POST http://zimaos/zima_cron/tasks/bulk/run \
+curl -X POST http://zimaos/cron/tasks/bulk/run \
   -H "Content-Type: application/json" \
   -d '{"ids": ["id1", "id2", "id3"]}'
 
 # Toggle (pause/resume) multiple tasks
-curl -X POST http://zimaos/zima_cron/tasks/bulk/toggle \
+curl -X POST http://zimaos/cron/tasks/bulk/toggle \
   -H "Content-Type: application/json" \
   -d '{"ids": ["id1", "id2"]}'
 
 # Delete multiple tasks
-curl -X POST http://zimaos/zima_cron/tasks/bulk/delete \
+curl -X POST http://zimaos/cron/tasks/bulk/delete \
   -H "Content-Type: application/json" \
   -d '{"ids": ["id1", "id2"]}'
 ```
@@ -358,7 +358,7 @@ curl -X POST http://zimaos/zima_cron/tasks/bulk/delete \
 ### Cron Validation
 
 ```bash
-curl -X POST http://zimaos/zima_cron/cron/validate \
+curl -X POST http://zimaos/cron/cron/validate \
   -H "Content-Type: application/json" \
   -d '{"expr": "*/5 * * * *"}'
 ```
@@ -376,10 +376,10 @@ Response:
 
 ```bash
 # Export all tasks
-curl http://zimaos/zima_cron/export -o tasks_backup.json
+curl http://zimaos/cron/export -o tasks_backup.json
 
 # Import tasks (created as paused)
-curl -X POST http://zimaos/zima_cron/import \
+curl -X POST http://zimaos/cron/import \
   -H "Content-Type: application/json" \
   -d @tasks_backup.json
 ```
@@ -394,7 +394,7 @@ curl -X POST http://zimaos/zima_cron/import \
 ### Health
 
 ```bash
-curl http://zimaos/zima_cron/health
+curl http://zimaos/cron/health
 ```
 
 ```json
@@ -414,7 +414,7 @@ Use this with Uptime Kuma, Zabbix, or any HTTP health checker.
 ### Templates
 
 ```bash
-curl http://zimaos/zima_cron/templates
+curl http://zimaos/cron/templates
 ```
 
 Returns a list of pre-built task templates that can be used to pre-fill the creation form.
@@ -423,15 +423,15 @@ Returns a list of pre-built task templates that can be used to pre-fill the crea
 
 ```bash
 # Get current settings
-curl http://zimaos/zima_cron/settings
+curl http://zimaos/cron/settings
 
 # Update Telegram config
-curl -X PUT http://zimaos/zima_cron/settings \
+curl -X PUT http://zimaos/cron/settings \
   -H "Content-Type: application/json" \
   -d '{"telegram_bot_token": "123:ABC", "telegram_chat_id": "-100123", "telegram_on_failure": true}'
 
 # Test Telegram
-curl -X POST http://zimaos/zima_cron/settings/test-telegram \
+curl -X POST http://zimaos/cron/settings/test-telegram \
   -H "Content-Type: application/json" \
   -d '{"bot_token": "123:ABC", "chat_id": "-100123"}'
 ```
@@ -444,13 +444,13 @@ curl -X POST http://zimaos/zima_cron/settings/test-telegram \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ZIMA_CRON_DATA_PATH` | `/DATA/AppData/zima_cron` | Storage directory for tasks.json and settings.json |
+| `CRON_DATA_PATH` | `/DATA/AppData/cron` | Storage directory for tasks.json and settings.json |
 | `CASAOS_RUNTIME_PATH` | (system default) | CasaOS gateway runtime path |
 
 ### Data Files
 
 ```
-/DATA/AppData/zima_cron/
+/DATA/AppData/cron/
   tasks.json          # All task definitions and state
   settings.json       # Global settings (Telegram config)
 ```

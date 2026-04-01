@@ -1,4 +1,4 @@
-module github.com/chicohaager/zima_cron
+module github.com/chicohaager/cron
 
 go 1.21
 

@@ -13,16 +13,18 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	conf "github.com/chicohaager/zima_cron/internal/config"
-	cronpkg "github.com/chicohaager/zima_cron/internal/cron"
-	"github.com/chicohaager/zima_cron/internal/notify"
-	svc "github.com/chicohaager/zima_cron/internal/service"
-	"github.com/chicohaager/zima_cron/internal/storage"
+	conf "github.com/chicohaager/cron/internal/config"
+	cronpkg "github.com/chicohaager/cron/internal/cron"
+	"github.com/chicohaager/cron/internal/notify"
+	svc "github.com/chicohaager/cron/internal/service"
+	"github.com/chicohaager/cron/internal/storage"
 )
 
 type Task struct {
@@ -80,7 +82,7 @@ type LogEntry struct {
 }
 
 const (
-	defaultStoragePath = "/DATA/AppData/zima_cron"
+	defaultStoragePath = "/DATA/AppData/cron"
 	version            = "0.2.0"
 	maxRequestBody     = 1 << 20 // 1 MB
 	maxTasks           = 500
@@ -88,60 +90,89 @@ const (
 
 var (
 	tasks     = map[string]*Task{}
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	store     storage.Storage
 	startTime = time.Now()
 	execSem   = make(chan struct{}, 10) // max 10 concurrent executions
 )
 
 func installWatchdog() {
-	timerPath := "/etc/systemd/system/zima-cron-watchdog.timer"
-	svcPath := "/etc/systemd/system/zima-cron-watchdog.service"
-
-	if _, err := os.Stat(timerPath); err == nil {
-		return // already installed
+	// Only install on systems with systemd (e.g. ZimaOS), skip on dev/CI
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		log.Printf("[cron] Systemd not detected, skipping watchdog install")
+		return
 	}
 
-	svcContent := `[Unit]
-Description=Restart zima-cron if not running
+	units := map[string]string{
+		"/etc/systemd/system/cron-watchdog.service": `[Unit]
+Description=Restart cron if not running
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'systemctl is-active zima-cron.service || systemctl start zima-cron.service'
-`
-	timerContent := `[Unit]
-Description=Ensure zima-cron is running after sysext refresh
+ExecStart=/bin/sh -c 'systemctl is-active cron.service || systemctl start cron.service'
+`,
+		"/etc/systemd/system/cron-watchdog.timer": `[Unit]
+Description=Ensure cron is running after sysext refresh
 
 [Timer]
-OnBootSec=45
-OnUnitActiveSec=30
+OnBootSec=15
 
 [Install]
 WantedBy=timers.target
-`
-	if err := os.WriteFile(svcPath, []byte(svcContent), 0644); err != nil {
-		log.Printf("[zima-cron] Could not install watchdog service: %v", err)
-		return
+`,
+		"/etc/systemd/system/cron-refresh.path": `[Unit]
+Description=Watch cron binary for updates
+
+[Path]
+PathChanged=/usr/bin/cron
+
+[Install]
+WantedBy=multi-user.target
+`,
+		"/etc/systemd/system/cron-refresh.service": `[Unit]
+Description=Restart cron after binary update
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'sleep 2 && systemctl restart cron.service'
+`,
 	}
-	if err := os.WriteFile(timerPath, []byte(timerContent), 0644); err != nil {
-		log.Printf("[zima-cron] Could not install watchdog timer: %v", err)
+
+	changed := false
+	for path, content := range units {
+		if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
+			continue
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			log.Printf("[cron] Could not write %s: %v", path, err)
+			return
+		}
+		changed = true
+	}
+	if !changed {
 		return
 	}
 
-	exec.Command("systemctl", "daemon-reload").Run()
-	exec.Command("systemctl", "enable", "--now", "zima-cron-watchdog.timer").Run()
-	log.Printf("[zima-cron] Watchdog timer installed and enabled")
+	if err := exec.Command("systemctl", "daemon-reload").Run(); err != nil {
+		log.Printf("[cron] systemctl daemon-reload: %v", err)
+	}
+	for _, unit := range []string{"cron-watchdog.timer", "cron-refresh.path"} {
+		if err := exec.Command("systemctl", "enable", "--now", unit).Run(); err != nil {
+			log.Printf("[cron] systemctl enable %s: %v", unit, err)
+		}
+	}
+	log.Printf("[cron] Watchdog timer and refresh path unit installed")
 }
 
 func main() {
-	log.Printf("[zima-cron] Starting zima-cron backend...")
+	log.Printf("[cron] Starting cron backend...")
 
 	// Ensure watchdog timer is installed (survives sysext refresh)
 	installWatchdog()
 
 	// Initialize persistent storage (retry until data path is available)
 	storagePath := defaultStoragePath
-	if envPath := os.Getenv("ZIMA_CRON_DATA_PATH"); envPath != "" {
+	if envPath := os.Getenv("CRON_DATA_PATH"); envPath != "" {
 		storagePath = envPath
 	}
 	var fs *storage.FileStorage
@@ -151,71 +182,99 @@ func main() {
 		if err == nil {
 			break
 		}
-		log.Printf("[zima-cron] Storage not ready (attempt %d/30): %v", i+1, err)
+		log.Printf("[cron] Storage not ready (attempt %d/30): %v", i+1, err)
 		time.Sleep(2 * time.Second)
 	}
 	if fs == nil {
-		log.Fatalf("[zima-cron] Failed to initialize storage at %s after 30 attempts", storagePath)
+		log.Fatalf("[cron] Failed to initialize storage at %s after 30 attempts", storagePath)
 	}
 	store = fs
 
 	// Load persisted tasks
 	if err := loadPersistedTasks(); err != nil {
-		log.Printf("[zima-cron] Warning: failed to load tasks: %v", err)
+		log.Printf("[cron] Warning: failed to load tasks: %v", err)
 	}
 
 	runtimePath := conf.CommonInfo.RuntimePath
 	if envPath := os.Getenv("CASAOS_RUNTIME_PATH"); envPath != "" {
 		runtimePath = envPath
-		log.Printf("[zima-cron] Overriding runtime path to: %s", runtimePath)
+		log.Printf("[cron] Overriding runtime path to: %s", runtimePath)
 	}
 
 	// Start HTTP server first, then register gateway route asynchronously.
 	// This ensures the server is always available, even if the gateway is slow to start.
 	mux := http.NewServeMux()
-	mux.HandleFunc("/zima_cron/tasks", withLogging(withCORS(tasksHandler)))
-	mux.HandleFunc("/zima_cron/tasks/", withLogging(withCORS(taskActionHandler)))
-	mux.HandleFunc("/zima_cron/categories", withLogging(withCORS(categoriesHandler)))
-	mux.HandleFunc("/zima_cron/tags", withLogging(withCORS(tagsHandler)))
-	mux.HandleFunc("/zima_cron/cron/validate", withLogging(withCORS(cronValidateHandler)))
-	mux.HandleFunc("/zima_cron/tasks/bulk/run", withLogging(withCORS(bulkRunHandler)))
-	mux.HandleFunc("/zima_cron/tasks/bulk/toggle", withLogging(withCORS(bulkToggleHandler)))
-	mux.HandleFunc("/zima_cron/tasks/bulk/delete", withLogging(withCORS(bulkDeleteHandler)))
-	mux.HandleFunc("/zima_cron/export", withLogging(withCORS(exportHandler)))
-	mux.HandleFunc("/zima_cron/import", withLogging(withCORS(importHandler)))
-	mux.HandleFunc("/zima_cron/health", withLogging(withCORS(healthHandler)))
-	mux.HandleFunc("/zima_cron/templates", withLogging(withCORS(templatesHandler)))
-	mux.HandleFunc("/zima_cron/settings", withLogging(withCORS(settingsHandler)))
-	mux.HandleFunc("/zima_cron/settings/test-telegram", withLogging(withCORS(testTelegramHandler)))
+	mux.HandleFunc("/cron/tasks", withLogging(withCORS(tasksHandler)))
+	mux.HandleFunc("/cron/tasks/", withLogging(withCORS(taskActionHandler)))
+	mux.HandleFunc("/cron/categories", withLogging(withCORS(categoriesHandler)))
+	mux.HandleFunc("/cron/tags", withLogging(withCORS(tagsHandler)))
+	mux.HandleFunc("/cron/cron/validate", withLogging(withCORS(cronValidateHandler)))
+	mux.HandleFunc("/cron/tasks/bulk/run", withLogging(withCORS(bulkRunHandler)))
+	mux.HandleFunc("/cron/tasks/bulk/toggle", withLogging(withCORS(bulkToggleHandler)))
+	mux.HandleFunc("/cron/tasks/bulk/delete", withLogging(withCORS(bulkDeleteHandler)))
+	mux.HandleFunc("/cron/export", withLogging(withCORS(exportHandler)))
+	mux.HandleFunc("/cron/import", withLogging(withCORS(importHandler)))
+	mux.HandleFunc("/cron/health", withLogging(withCORS(healthHandler)))
+	mux.HandleFunc("/cron/templates", withLogging(withCORS(templatesHandler)))
+	mux.HandleFunc("/cron/settings", withLogging(withCORS(settingsHandler)))
+	mux.HandleFunc("/cron/settings/test-telegram", withLogging(withCORS(testTelegramHandler)))
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", "0"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("zima-cron backend listening on http://%s", listener.Addr().String())
+	log.Printf("cron backend listening on http://%s", listener.Addr().String())
 
 	// Register gateway route asynchronously — retries if gateway isn't ready yet.
 	// This never blocks the HTTP server from serving requests.
-	log.Printf("[zima-cron] Gateway runtime path: %q", runtimePath)
-	svc.RegisterRouteAsync(runtimePath, "/zima_cron", "http://"+listener.Addr().String())
+	log.Printf("[cron] Gateway runtime path: %q", runtimePath)
+	svc.RegisterRouteAsync(runtimePath, "/cron", "http://"+listener.Addr().String())
 
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	if err := srv.Serve(listener); err != nil {
+
+	// Graceful shutdown on SIGTERM/SIGINT
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		sig := <-sigCh
+		log.Printf("[cron] Received %v, shutting down...", sig)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		// Stop all task schedules
+		mu.Lock()
+		for _, t := range tasks {
+			clearSchedule(t)
+		}
+		mu.Unlock()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("[cron] Shutdown error: %v", err)
+		}
+	}()
+
+	if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	log.Printf("[cron] Server stopped")
 }
 
 func withCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		h(w, r)
 	}
+}
+
+func jsonResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
 }
 
 func withLogging(h http.HandlerFunc) http.HandlerFunc {
@@ -263,8 +322,7 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		categoryFilter := r.URL.Query().Get("category")
 		tagFilter := r.URL.Query().Get("tag")
-		mu.Lock()
-		defer mu.Unlock()
+		mu.RLock()
 		out := make([]*Task, 0, len(tasks))
 		for _, t := range tasks {
 			if categoryFilter != "" && t.Category != categoryFilter {
@@ -275,11 +333,13 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			out = append(out, sanitizeTask(t))
 		}
+		mu.RUnlock()
+		jsonResponse(w)
 		json.NewEncoder(w).Encode(out)
 	case http.MethodPost:
-		mu.Lock()
+		mu.RLock()
 		taskCount := len(tasks)
-		mu.Unlock()
+		mu.RUnlock()
 		if taskCount >= maxTasks {
 			http.Error(w, fmt.Sprintf("task limit reached (%d)", maxTasks), 429)
 			return
@@ -333,6 +393,7 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Unlock()
 		startSchedule(t)
 		persistTask(t)
+		jsonResponse(w)
 		json.NewEncoder(w).Encode(sanitizeTask(t))
 	default:
 		w.WriteHeader(405)
@@ -340,21 +401,22 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func taskActionHandler(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/zima_cron/tasks/")
+	path := strings.TrimPrefix(r.URL.Path, "/cron/tasks/")
 	parts := strings.Split(path, "/")
 	if len(parts) == 0 {
 		w.WriteHeader(404)
 		return
 	}
 	id := parts[0]
-	mu.Lock()
+	mu.RLock()
 	t := tasks[id]
-	mu.Unlock()
+	mu.RUnlock()
 	if t == nil {
 		w.WriteHeader(404)
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
+		jsonResponse(w)
 		json.NewEncoder(w).Encode(sanitizeTask(t))
 		return
 	}
@@ -378,9 +440,13 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(405)
 			return
 		}
-		runTaskOnce(t)
-		persistTask(t)
-		json.NewEncoder(w).Encode(sanitizeTask(t))
+		// Non-blocking: run in goroutine so HTTP handler doesn't block on semaphore (M1)
+		go func() {
+			runTaskOnce(t)
+			persistTask(t)
+		}()
+		jsonResponse(w)
+		json.NewEncoder(w).Encode(map[string]string{"status": "triggered"})
 	case "toggle":
 		if r.Method != http.MethodPost {
 			w.WriteHeader(405)
@@ -388,12 +454,13 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		toggleTask(t)
 		persistTask(t)
+		jsonResponse(w)
 		json.NewEncoder(w).Encode(sanitizeTask(t))
 	case "logs":
 		if r.Method == http.MethodGet {
-			mu.Lock()
+			mu.RLock()
 			logs := append([]LogEntry(nil), t.logs...)
-			mu.Unlock()
+			mu.RUnlock()
 			if logs == nil {
 				logs = []LogEntry{}
 			}
@@ -451,6 +518,7 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 					fmt.Fprintf(w, "%d,%d,%t,\"%s\"\n", l.Time, l.DurationMs, l.Success, msg)
 				}
 			} else {
+				jsonResponse(w)
 				json.NewEncoder(w).Encode(logs)
 			}
 		} else if r.Method == http.MethodPost && len(parts) >= 3 && parts[2] == "clear" {
@@ -544,13 +612,36 @@ func toggleTask(t *Task) {
 }
 
 func runTaskOnce(t *Task) {
-	// Concurrency limit: block if too many tasks are running
-	execSem <- struct{}{}
+	// Concurrency limit via non-blocking select with timeout
+	select {
+	case execSem <- struct{}{}:
+	case <-time.After(30 * time.Second):
+		log.Printf("[cron] Task %s skipped: execution queue full", t.ID)
+		return
+	}
 	defer func() { <-execSem }()
 
-	// Check dependencies before running
-	if !canRun(t) {
-		log.Printf("[zima-cron] Task %s skipped: dependencies not met", t.ID)
+	// Copy fields under lock for safe access (C1)
+	mu.Lock()
+	taskID := t.ID
+	taskName := t.Name
+	taskCommand := t.Command
+	taskTimeoutSec := t.TimeoutSec
+	taskRetryCount := t.RetryCount
+	taskRetryDelaySec := t.RetryDelaySec
+	taskCurrentRetry := t.CurrentRetry
+	taskMaxLogEntries := t.MaxLogEntries
+	taskDependsOn := append([]string(nil), t.DependsOn...)
+	taskNotifications := append([]notify.Config(nil), t.Notifications...)
+	taskEnv := make(map[string]string, len(t.Env))
+	for k, v := range t.Env {
+		taskEnv[k] = v
+	}
+	mu.Unlock()
+
+	// Check dependencies before running (uses copied deps, no lock needed) (C2)
+	if !canRunWithDeps(taskDependsOn) {
+		log.Printf("[cron] Task %s skipped: dependencies not met", taskID)
 		mu.Lock()
 		t.LastResult = &Result{Success: false, Message: "Skipped: dependency not met"}
 		mu.Unlock()
@@ -565,7 +656,7 @@ func runTaskOnce(t *Task) {
 	start := time.Now()
 
 	// Configurable timeout (default: 2 minutes)
-	timeout := time.Duration(t.TimeoutSec) * time.Second
+	timeout := time.Duration(taskTimeoutSec) * time.Second
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
@@ -573,12 +664,12 @@ func runTaskOnce(t *Task) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", t.Command)
+	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", taskCommand)
 
 	// Environment variables
-	if len(t.Env) > 0 {
+	if len(taskEnv) > 0 {
 		cmd.Env = os.Environ()
-		for k, v := range t.Env {
+		for k, v := range taskEnv {
 			cmd.Env = append(cmd.Env, k+"="+v)
 		}
 	}
@@ -601,7 +692,7 @@ func runTaskOnce(t *Task) {
 		combined := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 		if combined == "" || combined == "\n" {
 			if ctx.Err() == context.DeadlineExceeded {
-				combined = fmt.Sprintf("Timeout after %ds", t.TimeoutSec)
+				combined = fmt.Sprintf("Timeout after %ds", taskTimeoutSec)
 			} else if err != nil {
 				combined = err.Error()
 			}
@@ -620,33 +711,38 @@ func runTaskOnce(t *Task) {
 	t.LastResult = &Result{Success: success, Message: msg}
 	t.logs = append([]LogEntry{{Time: t.LastRunAt, DurationMs: durationMs, Success: success, Message: msg}}, t.logs...)
 	// Log rotation
-	maxLogs := t.MaxLogEntries
+	maxLogs := taskMaxLogEntries
 	if maxLogs <= 0 {
 		maxLogs = 100 // default
 	}
 	if len(t.logs) > maxLogs {
 		t.logs = t.logs[:maxLogs]
 	}
+	// Retry logic — read/write CurrentRetry under lock (C1)
+	shouldRetry := false
+	if !success && taskRetryCount > 0 && taskCurrentRetry < taskRetryCount {
+		t.CurrentRetry++
+		shouldRetry = true
+	} else {
+		t.CurrentRetry = 0
+	}
 	mu.Unlock()
 
-	// Retry logic
-	if !success && t.RetryCount > 0 && t.CurrentRetry < t.RetryCount {
-		t.CurrentRetry++
-		retryDelay := time.Duration(t.RetryDelaySec) * time.Second
+	if shouldRetry {
+		retryDelay := time.Duration(taskRetryDelaySec) * time.Second
 		if retryDelay <= 0 {
 			retryDelay = 10 * time.Second
 		}
-		log.Printf("[zima-cron] Task %s failed, retrying %d/%d in %v", t.ID, t.CurrentRetry, t.RetryCount, retryDelay)
+		log.Printf("[cron] Task %s failed, retrying %d/%d in %v", taskID, taskCurrentRetry+1, taskRetryCount, retryDelay)
 		time.AfterFunc(retryDelay, func() {
 			runTaskOnce(t)
 		})
 	} else {
-		t.CurrentRetry = 0
 		// Send notifications only on final result (not during retries)
-		taskInfo := notify.TaskInfo{ID: t.ID, Name: t.Name, Command: t.Command}
+		taskInfo := notify.TaskInfo{ID: taskID, Name: taskName, Command: taskCommand}
 		resultInfo := notify.ResultInfo{Success: success, Message: msg, DurationMs: durationMs}
-		if len(t.Notifications) > 0 {
-			notify.Send(t.Notifications, taskInfo, resultInfo)
+		if len(taskNotifications) > 0 {
+			notify.Send(taskNotifications, taskInfo, resultInfo)
 		}
 		// Global Telegram notification (from settings)
 		if tgCfg := getTelegramNotifyConfig(); tgCfg != nil {
@@ -778,7 +874,7 @@ func loadPersistedTasks() error {
 	for _, t := range running {
 		startSchedule(t)
 	}
-	log.Printf("[zima-cron] Loaded %d tasks from storage (%d running)", len(persisted), len(running))
+	log.Printf("[cron] Loaded %d tasks from storage (%d running)", len(persisted), len(running))
 	return nil
 }
 
@@ -788,7 +884,7 @@ func persistTask(t *Task) {
 		return
 	}
 	if err := store.SaveTask(taskToData(t)); err != nil {
-		log.Printf("[zima-cron] Error persisting task %s: %v", t.ID, err)
+		log.Printf("[cron] Error persisting task %s: %v", t.ID, err)
 	}
 }
 
@@ -798,19 +894,19 @@ func persistDelete(id string) {
 		return
 	}
 	if err := store.DeleteTask(id); err != nil {
-		log.Printf("[zima-cron] Error deleting task %s from storage: %v", id, err)
+		log.Printf("[cron] Error deleting task %s from storage: %v", id, err)
 	}
 }
 
-// canRun checks whether all dependencies of a task have succeeded.
-// Returns true if the task has no dependencies or all deps last succeeded.
-func canRun(t *Task) bool {
-	if len(t.DependsOn) == 0 {
+// canRunWithDeps checks whether all dependencies have succeeded.
+// Takes a pre-copied dependency list to avoid double-locking (C2).
+func canRunWithDeps(dependsOn []string) bool {
+	if len(dependsOn) == 0 {
 		return true
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, depID := range t.DependsOn {
+	mu.RLock()
+	defer mu.RUnlock()
+	for _, depID := range dependsOn {
 		dep, ok := tasks[depID]
 		if !ok {
 			continue // ignore missing dependencies
@@ -836,8 +932,7 @@ func categoriesHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	mu.RLock()
 	seen := map[string]bool{}
 	cats := []string{}
 	for _, t := range tasks {
@@ -846,6 +941,8 @@ func categoriesHandler(w http.ResponseWriter, r *http.Request) {
 			cats = append(cats, t.Category)
 		}
 	}
+	mu.RUnlock()
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(cats)
 }
 
@@ -854,8 +951,7 @@ func tagsHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	mu.Lock()
-	defer mu.Unlock()
+	mu.RLock()
 	seen := map[string]bool{}
 	allTags := []string{}
 	for _, t := range tasks {
@@ -866,6 +962,8 @@ func tagsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	mu.RUnlock()
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(allTags)
 }
 
@@ -912,6 +1010,7 @@ func cronValidateHandler(w http.ResponseWriter, r *http.Request) {
 	if resp.NextRuns == nil {
 		resp.NextRuns = []int64{}
 	}
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(resp)
 }
 
@@ -931,17 +1030,18 @@ func bulkRunHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	mu.Lock()
+	mu.RLock()
 	var toRun []*Task
 	for _, id := range req.IDs {
 		if t, ok := tasks[id]; ok {
 			toRun = append(toRun, t)
 		}
 	}
-	mu.Unlock()
+	mu.RUnlock()
 	for _, t := range toRun {
 		go runTaskOnce(t)
 	}
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(map[string]int{"triggered": len(toRun)})
 }
 
@@ -972,7 +1072,7 @@ func bulkToggleHandler(w http.ResponseWriter, r *http.Request) {
 	// Persist outside lock
 	for _, td := range tds {
 		if err := store.SaveTask(td); err != nil {
-			log.Printf("[zima-cron] Error persisting task %s: %v", td.ID, err)
+			log.Printf("[cron] Error persisting task %s: %v", td.ID, err)
 		}
 	}
 	w.WriteHeader(204)
@@ -989,14 +1089,19 @@ func bulkDeleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mu.Lock()
+	var deletedIDs []string
 	for _, id := range req.IDs {
 		if t, ok := tasks[id]; ok {
 			clearSchedule(t)
 			delete(tasks, id)
-			go persistDelete(id)
+			deletedIDs = append(deletedIDs, id)
 		}
 	}
 	mu.Unlock()
+	// Persist deletes sequentially outside lock (L4)
+	for _, id := range deletedIDs {
+		persistDelete(id)
+	}
 	w.WriteHeader(204)
 }
 
@@ -1007,14 +1112,18 @@ func exportHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	mu.Lock()
+	mu.RLock()
 	out := make([]*Task, 0, len(tasks))
 	for _, t := range tasks {
-		out = append(out, sanitizeTask(t))
+		cp := sanitizeTask(t)
+		// Strip notification configs entirely — they contain credentials
+		// that would be masked and broken on re-import (M7)
+		cp.Notifications = nil
+		out = append(out, cp)
 	}
-	mu.Unlock()
+	mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", "attachment; filename=zima_cron_export.json")
+	w.Header().Set("Content-Disposition", "attachment; filename=cron_export.json")
 	json.NewEncoder(w).Encode(out)
 }
 
@@ -1028,9 +1137,9 @@ func importHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON: "+err.Error(), 400)
 		return
 	}
-	mu.Lock()
+	mu.RLock()
 	remaining := maxTasks - len(tasks)
-	mu.Unlock()
+	mu.RUnlock()
 	if len(imported) > remaining {
 		imported = imported[:remaining]
 	}
@@ -1069,6 +1178,7 @@ func importHandler(w http.ResponseWriter, r *http.Request) {
 		persistTask(t)
 		created++
 	}
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(map[string]int{"imported": created})
 }
 
@@ -1079,7 +1189,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
-	mu.Lock()
+	mu.RLock()
 	total := len(tasks)
 	running := 0
 	paused := 0
@@ -1094,7 +1204,8 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 			lastExec = t.LastRunAt
 		}
 	}
-	mu.Unlock()
+	mu.RUnlock()
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":         "healthy",
 		"version":        version,
@@ -1177,6 +1288,7 @@ func templatesHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
 		return
 	}
+	jsonResponse(w)
 	json.NewEncoder(w).Encode(builtinTemplates)
 }
 
@@ -1204,6 +1316,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 			TelegramOnFailure: s.TelegramOnFailure,
 			TelegramConfigured: s.TelegramBotToken != "" && s.TelegramChatID != "",
 		}
+		jsonResponse(w)
 		json.NewEncoder(w).Encode(resp)
 	case http.MethodPut:
 		var req struct {
@@ -1232,6 +1345,7 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 500)
 			return
 		}
+		jsonResponse(w)
 		json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
 	default:
 		w.WriteHeader(405)
@@ -1267,8 +1381,9 @@ func testTelegramHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bot_token and chat_id required", 400)
 		return
 	}
-	msg := "\u2705 *zima-cron* test message\\!\nTelegram notifications are working\\."
+	msg := "\u2705 <b>cron</b> test message!\nTelegram notifications are working."
 	err := notify.SendTelegramMessage(req.BotToken, req.ChatID, msg)
+	jsonResponse(w)
 	if err != nil {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": false,
@@ -1330,7 +1445,8 @@ func cronNext(expr string, from time.Time) time.Time {
 	monSet := parseCronField(f[3], 1, 12, false)
 	dowSet := parseCronField(f[4], 0, 6, true)
 	d := from.Truncate(time.Minute).Add(time.Minute)
-	for i := 0; i < 100000; i++ {
+	deadline := d.Add(366 * 24 * time.Hour) // search up to 1 year ahead
+	for d.Before(deadline) {
 		m := d.Minute()
 		h := d.Hour()
 		dom := d.Day()
@@ -1379,7 +1495,11 @@ func parseCronField(expr string, min, max int, isDow bool) cronField {
 			continue
 		}
 		if strings.HasPrefix(tok, "*/") {
-			step, _ := strconv.Atoi(strings.TrimPrefix(tok, "*/"))
+			step, err := strconv.Atoi(strings.TrimPrefix(tok, "*/"))
+			if err != nil || step <= 0 {
+				log.Printf("[cron] Invalid cron step %q, skipping", tok)
+				continue
+			}
 			cf.isAll = true
 			addRange(min, max, step)
 			continue
@@ -1392,15 +1512,24 @@ func parseCronField(expr string, min, max int, isDow bool) cronField {
 		}
 		if strings.Contains(tok, "-") {
 			parts := strings.Split(tok, "-")
-			a, _ := strconv.Atoi(parts[0])
+			a, errA := strconv.Atoi(parts[0])
 			bPart := parts[1]
 			step := 1
 			if strings.Contains(bPart, "/") {
 				sub := strings.Split(bPart, "/")
 				bPart = sub[0]
-				step, _ = strconv.Atoi(sub[1])
+				s, errS := strconv.Atoi(sub[1])
+				if errS != nil || s <= 0 {
+					log.Printf("[cron] Invalid cron range step %q, skipping", tok)
+					continue
+				}
+				step = s
 			}
-			b, _ := strconv.Atoi(bPart)
+			b, errB := strconv.Atoi(bPart)
+			if errA != nil || errB != nil {
+				log.Printf("[cron] Invalid cron range %q, skipping", tok)
+				continue
+			}
 			if isDow && b == 7 {
 				cf.has7 = true
 			}
@@ -1410,19 +1539,25 @@ func parseCronField(expr string, min, max int, isDow bool) cronField {
 		if strings.Contains(tok, "/") {
 			parts := strings.Split(tok, "/")
 			if parts[0] == "*" {
-				step, _ := strconv.Atoi(parts[1])
+				step, err := strconv.Atoi(parts[1])
+				if err != nil || step <= 0 {
+					log.Printf("[cron] Invalid cron step %q, skipping", tok)
+					continue
+				}
 				addRange(min, max, step)
 				continue
 			}
 		}
 		v, err := strconv.Atoi(tok)
-		if err == nil {
-			if isDow && v == 7 {
-				cf.has7 = true
-			}
-			if v >= min && v <= max {
-				cf.set[v] = true
-			}
+		if err != nil {
+			log.Printf("[cron] Invalid cron token %q, skipping", tok)
+			continue
+		}
+		if isDow && v == 7 {
+			cf.has7 = true
+		}
+		if v >= min && v <= max {
+			cf.set[v] = true
 		}
 	}
 	return cf

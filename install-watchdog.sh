@@ -1,34 +1,55 @@
 #!/bin/bash
 set -euo pipefail
 
-# Install zima-cron watchdog timer to /etc/systemd/system/
+# Install cron watchdog timer to /etc/systemd/system/
 # This survives sysext refreshes because /etc is persistent.
 
-echo "Installing zima-cron watchdog timer..."
+echo "Installing cron watchdog timer..."
 
-cat > /etc/systemd/system/zima-cron-watchdog.service << 'EOF'
+cat > /etc/systemd/system/cron-watchdog.service << 'EOF'
 [Unit]
-Description=Restart zima-cron if not running
+Description=Restart cron if not running
 
 [Service]
 Type=oneshot
-ExecStart=/bin/sh -c 'systemctl is-active zima-cron.service || systemctl start zima-cron.service'
+ExecStart=/bin/sh -c 'systemctl is-active cron.service || systemctl start cron.service'
 EOF
 
-cat > /etc/systemd/system/zima-cron-watchdog.timer << 'EOF'
+cat > /etc/systemd/system/cron-watchdog.timer << 'EOF'
 [Unit]
-Description=Ensure zima-cron is running after sysext refresh
+Description=Ensure cron is running after sysext refresh
 
 [Timer]
-OnBootSec=45
-OnUnitActiveSec=30
+OnBootSec=15
 
 [Install]
 WantedBy=timers.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now zima-cron-watchdog.timer
+# Path unit: auto-restart cron when binary changes (e.g. sysext refresh)
+cat > /etc/systemd/system/cron-refresh.path << 'EOF'
+[Unit]
+Description=Watch cron binary for updates
 
-echo "Done. Watchdog timer installed and started."
-echo "zima-cron will be checked 45s after boot, then every 30s."
+[Path]
+PathChanged=/usr/bin/cron
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/cron-refresh.service << 'EOF'
+[Unit]
+Description=Restart cron after binary update
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'sleep 2 && systemctl restart cron.service'
+EOF
+
+systemctl daemon-reload
+systemctl enable --now cron-watchdog.timer
+systemctl enable --now cron-refresh.path
+
+echo "Done. Watchdog timer and refresh path unit installed."
+echo "cron will auto-restart when the binary is updated."

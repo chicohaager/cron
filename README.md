@@ -1,158 +1,190 @@
-# zima_cron
+# Cron 
+[![ZimaOS](https://img.shields.io/badge/ZimaOS-Module-blue?style=flat-square)](https://github.com/IceWhaleTech/ZimaOS)
+[![GitHub](https://img.shields.io/github/stars/chicohaager/cron?style=flat-square)](https://github.com/chicohaager/cron)
+[![License](https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square)](LICENSE)
 
-A lightweight, professional task scheduler for [ZimaOS](https://www.zimaos.com/) / [CasaOS](https://casaos.io/). Schedule commands with interval or cron expressions, manage execution with timeouts and retries, organize with categories and tags, and monitor with webhook notifications.
+A modern, reliable task scheduler for ZimaOS with a completely redesigned web interface. Replaces the previous cron implementation with improved task persistence, advanced scheduling options, and comprehensive notification support.
 
-## Features
+## ✨ Features
 
-- **Interval & Cron Scheduling** — run commands every N minutes or via 5-field cron expressions
-- **Persistent Storage** — tasks survive reboots (JSON file with atomic writes)
-- **Live Execution Indicator** — pulsing blue dot shows active task execution in real-time
-- **Configurable Timeouts & Retries** — per-task timeout, automatic retry on failure
-- **Environment Variables** — inject custom env vars into task commands
-- **Notifications** — Webhook, Email (SMTP), and global Telegram notifications
-- **Categories, Tags & Priority** — organize and filter tasks
-- **Task Dependencies** — skip execution when upstream tasks haven't succeeded
-- **Log Management** — per-task logs with rotation, search, CSV/JSON export
-- **Clean Output** — success shows stdout only, failure shows full stderr context
-- **Cron Validation** — real-time validation with next 5 execution times preview
-- **Task Templates** — pre-built templates for backups, monitoring, Docker cleanup
-- **Bulk Operations** — run, pause, or delete multiple tasks at once
-- **Import/Export** — backup and restore all tasks as JSON
-- **Health Endpoint** — `GET /zima_cron/health` for monitoring tools (Uptime Kuma, Zabbix)
-- **Sysext Watchdog** — auto-restart after ZimaOS sysext refresh cycles
-- **Async Gateway** — HTTP server starts instantly, gateway registration in background
-- **Bilingual UI** — English and Chinese, switchable in the header
+- **Brand-new Scheduler UI** – Clean, dark-themed dashboard for managing all scheduled tasks
+- **Persistent Tasks** – Tasks survive system restarts and continue running reliably
+- **Built-in Templates** – Quick-start templates for common tasks:
+  - AppData Backup (Archive /DATA/AppData)
+  - Cleanup Temp Files (Remove files older than 7 days)
+  - System Health Check (Disk space, memory, load average)
+  - Docker Cleanup (Remove unused images, containers, volumes)
+  - System Update Check
+  - SSL Certificate Expiry Check
+  - Docker Container Status
+- **Flexible Scheduling** – Interval-based (minutes) or cron expressions
+- **Task Dependencies** – Define execution order with "Depends On"
+- **Priority System** – Set task priority (1-10)
+- **Categorization & Tags** – Organize tasks with categories and comma-separated tags
+- **Real-time Status** – Monitor running/paused tasks with live status indicators
+- **Execution Logs** – View logs per task with export options (CSV, JSON)
+- **Multi-Channel Notifications**:
+  - 📱 **Telegram** – Global bot notifications for all tasks
+  - 🌐 **Webhook** – HTTP POST to any endpoint
+  - 📧 **Email (SMTP)** – Per-task email alerts
+- **Advanced Options**:
+  - Timeout (seconds)
+  - Retry Count & Retry Delay
+  - Environment Variables
+  - Max Log Entries
+  - Parallel Execution Control
 
-## Quick Start
+## 📸 Screenshots
 
-### Install on ZimaOS
+![Dashboard](images/dashboard.png)
 
-1. Download `zima_cron.raw` from [Releases](https://github.com/chicohaager/zima_cron/releases)
-2. Install via zpkg:
-   ```bash
-   scp zima_cron.raw root@zimaos:/tmp/
-   ssh root@zimaos 'zpkg remove zima_cron; zpkg install /tmp/zima_cron.raw && systemctl start zima-cron'
-   ```
-3. Open the Scheduler module in the ZimaOS dashboard
+## 🚀 Installation
 
-### Build from Source
+### ZimaOS 1.6.0+
 
-```bash
-git clone https://github.com/chicohaager/zima_cron.git
-cd zima_cron
+The Cron module comes pre-installed with ZimaOS 1.6.0 and later.
 
-# Build .raw package (requires Go 1.21+ and squashfs-tools)
-./build.sh amd64
-```
-
-### Local Development
-
-```bash
-export ZIMA_CRON_DATA_PATH=/tmp/zima_cron_data
-go run ./cmd/zima-cron
-```
-
-## API Overview
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/zima_cron/tasks` | GET | List tasks (supports `?category=X&tag=Y`) |
-| `/zima_cron/tasks` | POST | Create task |
-| `/zima_cron/tasks/{id}` | GET | Get task details |
-| `/zima_cron/tasks/{id}` | DELETE | Delete task |
-| `/zima_cron/tasks/{id}/run` | POST | Run task once |
-| `/zima_cron/tasks/{id}/toggle` | POST | Pause/resume task |
-| `/zima_cron/tasks/{id}/logs` | GET | Get logs (`?format=csv&search=X`) |
-| `/zima_cron/tasks/bulk/run` | POST | Bulk run tasks |
-| `/zima_cron/tasks/bulk/toggle` | POST | Bulk pause/resume |
-| `/zima_cron/tasks/bulk/delete` | POST | Bulk delete |
-| `/zima_cron/cron/validate` | POST | Validate cron expression |
-| `/zima_cron/export` | GET | Export all tasks as JSON |
-| `/zima_cron/import` | POST | Import tasks from JSON |
-| `/zima_cron/categories` | GET | List categories |
-| `/zima_cron/tags` | GET | List tags |
-| `/zima_cron/templates` | GET | List task templates |
-| `/zima_cron/settings` | GET/PUT | Global settings (Telegram) |
-| `/zima_cron/settings/test-telegram` | POST | Test Telegram config |
-| `/zima_cron/health` | GET | Health check |
-
-See [FEATURES.md](FEATURES.md) for the complete API reference with curl examples.
-
-## Task Model
-
-```json
-{
-  "name": "Daily Backup",
-  "command": "/usr/bin/backup.sh",
-  "type": "cron",
-  "cron_expr": "0 3 * * *",
-  "timeout_sec": 300,
-  "retry_count": 2,
-  "retry_delay_sec": 60,
-  "env": { "BACKUP_DIR": "/data/backups" },
-  "category": "backup",
-  "tags": ["critical", "daily"],
-  "priority": 9,
-  "depends_on": ["other-task-id"],
-  "max_log_entries": 200,
-  "notifications": [{
-    "enabled": true,
-    "type": "webhook",
-    "target": "https://hooks.example.com/notify",
-    "on_success": false,
-    "on_failure": true
-  }]
-}
-```
-
-## Project Structure
-
-```
-zima_cron/
-  cmd/zima-cron/main.go       # Entry point, HTTP handlers, scheduler
-  internal/
-    config/config.go           # CasaOS configuration
-    service/service.go         # Gateway integration
-    storage/storage.go         # JSON file persistence (atomic writes)
-    notify/notify.go           # Webhook, email, and Telegram notifications
-    cron/validate.go           # Cron expression validator
-  raw/                         # ZimaOS system extension structure
-    usr/bin/zima-cron           # Compiled binary
-    usr/lib/systemd/system/     # Service file
-    usr/share/casaos/           # Module config + web UI
-  build.sh                     # Build script (.raw package creation)
-  test_deployment.sh           # 29-test deployment verification script
-  FEATURES.md                  # Detailed feature docs & API reference
-```
-
-## Testing
-
-Run the deployment test suite against a live instance:
+### Manual Installation (ZimaOS 1.2.5+)
 
 ```bash
-./test_deployment.sh http://your-zimaos-ip
+zpkg install cron
 ```
 
-Runs 29 automated tests covering all features with automatic cleanup.
+Or download from [Releases](https://github.com/chicohaager/cron/releases) and install manually:
 
-## Configuration
+```bash
+zpkg install cron.raw
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ZIMA_CRON_DATA_PATH` | `/DATA/AppData/zima_cron` | Persistent storage directory |
-| `CASAOS_RUNTIME_PATH` | System default | CasaOS gateway path |
+## 🔧 Usage
 
-## Tech Stack
+Access the **Scheduler** from your ZimaOS dashboard sidebar.
 
-- **Backend:** Go 1.21+ (net/http, no frameworks)
-- **Frontend:** Vanilla JavaScript, HTML, CSS (no frameworks)
-- **Storage:** JSON file with atomic writes
-- **Packaging:** systemd-sysext (squashfs `.raw`)
+### Creating a Task
 
-## License
+1. Click **"New Task"** in the top right corner
+2. Select a template or start with "Blank Task"
+3. Configure:
+   - **Name** – Descriptive task name
+   - **Schedule Type** – Interval (minutes) or Cron expression
+   - **Category** – e.g., `backup`, `maintenance`, `monitoring`
+   - **Tags** – e.g., `critical, daily`
+   - **Priority** – 1 (highest) to 10 (lowest)
+4. Expand **Advanced Options** for:
+   - Timeout, Retry settings
+   - Task dependencies
+   - Webhook/Email notifications
+5. Click **"Create"**
 
-Based on [LinkLeong/zima_cron](https://github.com/LinkLeong/zima_cron). Extended with professional features.
+### Task Templates
 
-## Author:
+| Template | Description |
+|----------|-------------|
+| AppData Backup | Archive /DATA/AppData to /DATA/backups/ |
+| Cleanup Temp Files | Remove files older than 7 days from /tmp |
+| System Health Check | Check disk space, memory, and load average |
+| Docker Cleanup | Remove unused Docker images, containers, and volumes |
+| System Update Check | Check for available system updates |
+| SSL Certificate Expiry Check | Check SSL certificate expiry for a domain |
+| Docker Container Status | List all containers with status and resource usage |
 
-Holger Kuehn
+### Filtering Tasks
+
+Use the dropdown filters at the top:
+- **All Categories** – Filter by category
+- **All Tags** – Filter by assigned tags
+
+### Task Actions
+
+Each task row provides quick actions:
+- **Run Once** – Execute immediately
+- **Pause / Resume** – Toggle task scheduling
+- **Show Logs / Hide Logs** – Expand inline log viewer
+- **Delete Task** – Remove the task
+
+### Viewing Logs
+
+Click **"Show Logs"** to expand the log section for any task. Options:
+- **Search logs** – Filter log entries
+- **Export CSV** – Download logs as CSV
+- **Export JSON** – Download logs as JSON
+- **Clear Logs** – Remove all log entries for this task
+
+## 🔔 Notifications
+
+### Telegram Notifications (Global)
+
+Configure global Telegram notifications in **Settings** (gear icon). These apply to all tasks.
+
+1. Create a Telegram bot via [@BotFather](https://t.me/botfather)
+2. Copy your **Bot Token** (e.g., `123456:ABC-DEF...`)
+3. Get your **Chat ID** (e.g., `-1001234567890` for groups)
+4. Select when to notify:
+   - ☐ On Success
+   - ☑ On Failure
+5. Click **"Test"** to verify, then **"Save"**
+
+### Webhook Notifications (Per-Task)
+
+Configure a webhook URL in the task's Advanced Options to receive POST requests:
+
+```
+https://example.com/webhook
+```
+
+Select when to trigger:
+- ☐ On Success
+- ☑ On Failure
+
+### Email Notifications (Per-Task)
+
+Configure SMTP settings in the task's Advanced Options:
+- **Recipient** – e.g., `admin@example.com`
+- **SMTP Server** – e.g., `smtp.gmail.com`
+- **Port** – e.g., `587`
+- **Username** – SMTP username
+- **Password** – SMTP password or app password
+
+## 🛠 Technical Details
+
+### Data Storage
+
+Task configurations and logs are stored in:
+```
+/DATA/AppData/cron/
+```
+
+### Persistence
+
+Tasks are persisted to disk and automatically restored after system restart. This fixes the known issue where tasks did not continue after a reboot in previous versions.
+
+### Dependencies
+
+Tasks with dependencies will only execute after all dependent tasks have completed successfully.
+
+## 🐛 Fixed Issues
+
+- **Tasks not continuing after restart** – Tasks now persist across reboots
+- **UI not loading in 1.6.0beta1** – Completely rewritten frontend
+- **Missing task logs** – Logs are now reliably stored and exportable
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+- **Repository**: [github.com/chicohaager/cron](https://github.com/chicohaager/cron)
+- **Issues**: [Report a bug](https://github.com/chicohaager/cron/issues)
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [IceWhale Technology](https://github.com/IceWhaleTech) – ZimaOS Team
+- [@Lintuxer](https://github.com/chicohaager) – Original author
+- Community contributors and testers
+
+---
+
+**Made with ❤️ for the ZimaOS Community**

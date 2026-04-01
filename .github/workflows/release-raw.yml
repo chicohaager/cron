@@ -21,12 +21,24 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: '1.22'
+
+      - name: Run tests
+        run: go test ./...
 
       - name: Build backend (linux amd64)
         run: |
-          GOOS=linux GOARCH=amd64 go build -o ./raw/usr/bin/zima-cron ./cmd/zima-cron
-          chmod +x ./raw/usr/bin/zima-cron
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -ldflags="-s -w" \
+            -o ./raw/usr/bin/cron \
+            ./cmd/cron
+          chmod +x ./raw/usr/bin/cron
+
+      - name: Sync frontend files
+        run: |
+          cp app.js    raw/usr/share/casaos/www/modules/cron/app.js
+          cp index.html raw/usr/share/casaos/www/modules/cron/index.html
+          cp styles.css raw/usr/share/casaos/www/modules/cron/styles.css
 
       - name: Install squashfs-tools
         run: |
@@ -35,14 +47,14 @@ jobs:
 
       - name: Package RAW
         run: |
-          mksquashfs raw/ zima_cron.raw -noappend -comp gzip
-          ls -lh zima_cron.raw
+          mksquashfs raw/ cron.raw -noappend -comp gzip
+          ls -lh cron.raw
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: zima_cron.raw
-          path: zima_cron.raw
+          name: cron.raw
+          path: cron.raw
 
       - name: Get version (push/dispatch)
         id: get_version_push
@@ -59,5 +71,5 @@ jobs:
       - name: Update release
         uses: softprops/action-gh-release@v1
         with:
-          files: ./zima_cron.raw
+          files: ./cron.raw
           tag_name: ${{ steps.get_version_push.outputs.VERSION || steps.get_version_release.outputs.VERSION }}

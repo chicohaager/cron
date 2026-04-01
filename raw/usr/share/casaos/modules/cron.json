@@ -1,0 +1,17 @@
+{
+  "name": "cron",
+  "ui": {
+    "name": "cron",
+    "title": { "en_us": "Cron", "zh_cn": "调度器" },
+    "prefetch": true,
+    "show": true,
+    "entry": "/modules/cron/index.html",
+    "icon": "/modules/cron/appicon.svg",
+    "description": "Assist",
+    "formality": {
+      "type": "newtab",
+      "props": { "width": "100vh", "height": "100vh", "hasModalCard": true, "animation": "zoom-in" }
+    }
+  },
+  "services": [ { "name": "cron" } ]
+}
