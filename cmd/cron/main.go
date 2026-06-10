@@ -317,6 +317,89 @@ type createReq struct {
 	MaxLogEntries int               `json:"max_log_entries,omitempty"`
 }
 
+const maskedSecret = "********"
+
+func validateNotifications(notifs []notify.Config) error {
+	for _, n := range notifs {
+		if n.Type != "webhook" && n.Type != "email" && n.Type != "telegram" {
+			return fmt.Errorf("invalid notification type: %s", n.Type)
+		}
+		if n.Type == "webhook" {
+			if err := notify.ValidateWebhookFormat(n.WebhookFormat); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func mergeNotificationCredentials(incoming, existing []notify.Config) []notify.Config {
+	if len(incoming) == 0 {
+		return incoming
+	}
+	merged := make([]notify.Config, len(incoming))
+	copy(merged, incoming)
+	for i := range merged {
+		if merged[i].SMTPPass == maskedSecret {
+			for _, e := range existing {
+				if e.Type == "email" && e.Target == merged[i].Target && e.SMTPHost == merged[i].SMTPHost {
+					merged[i].SMTPPass = e.SMTPPass
+					break
+				}
+			}
+		}
+		if merged[i].TelegramBotToken == maskedSecret {
+			for _, e := range existing {
+				if e.Type == "telegram" && e.Target == merged[i].Target {
+					merged[i].TelegramBotToken = e.TelegramBotToken
+					break
+				}
+			}
+		}
+	}
+	return merged
+}
+
+func applyCreateReq(t *Task, req createReq) error {
+	t.Name = req.Name
+	t.Command = req.Command
+	t.Type = req.Type
+	t.TimeoutSec = req.TimeoutSec
+	t.RetryCount = req.RetryCount
+	t.RetryDelaySec = req.RetryDelaySec
+	t.Env = req.Env
+	t.Category = req.Category
+	t.Tags = req.Tags
+	t.Priority = req.Priority
+	t.DependsOn = req.DependsOn
+	t.AllowParallel = req.AllowParallel
+	t.MaxLogEntries = req.MaxLogEntries
+	if req.Type == "interval" {
+		if req.IntervalMin < 1 {
+			return fmt.Errorf("interval_min >=1")
+		}
+		t.Interval = time.Duration(req.IntervalMin) * time.Minute
+		t.CronExpr = ""
+	} else {
+		if !isValidCron(req.CronExpr) {
+			return fmt.Errorf("invalid cron")
+		}
+		t.CronExpr = req.CronExpr
+		t.Interval = 0
+	}
+	return nil
+}
+
+func scheduleChanged(t *Task, req createReq) bool {
+	if t.Type != req.Type {
+		return true
+	}
+	if req.Type == "interval" {
+		return int(t.Interval/time.Minute) != req.IntervalMin
+	}
+	return t.CronExpr != req.CronExpr
+}
+
 func tasksHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -357,12 +440,9 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid type", 400)
 			return
 		}
-		// Validate notification configs
-		for _, n := range req.Notifications {
-			if n.Type != "webhook" && n.Type != "email" && n.Type != "telegram" {
-				http.Error(w, "invalid notification type: "+n.Type, 400)
-				return
-			}
+		if err := validateNotifications(req.Notifications); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
 		}
 		id := newTaskID()
 		t := &Task{
@@ -375,18 +455,9 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 			DependsOn: req.DependsOn, AllowParallel: req.AllowParallel,
 			MaxLogEntries: req.MaxLogEntries,
 		}
-		if req.Type == "interval" {
-			if req.IntervalMin < 1 {
-				http.Error(w, "interval_min >=1", 400)
-				return
-			}
-			t.Interval = time.Duration(req.IntervalMin) * time.Minute
-		} else {
-			if !isValidCron(req.CronExpr) {
-				http.Error(w, "invalid cron", 400)
-				return
-			}
-			t.CronExpr = req.CronExpr
+		if err := applyCreateReq(t, req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
 		}
 		mu.Lock()
 		tasks[id] = t
@@ -427,6 +498,46 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 		mu.Unlock()
 		persistDelete(id)
 		w.WriteHeader(204)
+		return
+	}
+	if len(parts) == 1 && r.Method == http.MethodPut {
+		var req createReq
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.Command) == "" {
+			http.Error(w, "name/command required", 400)
+			return
+		}
+		if req.Type != "interval" && req.Type != "cron" {
+			http.Error(w, "invalid type", 400)
+			return
+		}
+		if err := validateNotifications(req.Notifications); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		mu.Lock()
+		existingNotifs := append([]notify.Config(nil), t.Notifications...)
+		needsReschedule := scheduleChanged(t, req)
+		wasRunning := t.Status == "running"
+		if err := applyCreateReq(t, req); err != nil {
+			mu.Unlock()
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		t.Notifications = mergeNotificationCredentials(req.Notifications, existingNotifs)
+		if needsReschedule {
+			clearSchedule(t)
+			if wasRunning {
+				startSchedule(t)
+			}
+		}
+		mu.Unlock()
+		persistTask(t)
+		jsonResponse(w)
+		json.NewEncoder(w).Encode(sanitizeTask(t))
 		return
 	}
 	if len(parts) < 2 {
