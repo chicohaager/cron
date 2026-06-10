@@ -32,6 +32,9 @@ type Config struct {
 
 	// Telegram settings (only for type "telegram")
 	TelegramBotToken string `json:"telegram_bot_token,omitempty"`
+
+	// Webhook format (only for type "webhook")
+	WebhookFormat string `json:"webhook_format,omitempty"` // generic, n8n, discord, slack, home_assistant, uptime_kuma
 }
 
 // TaskInfo is a minimal view of a task for notification payloads.
@@ -48,12 +51,51 @@ type ResultInfo struct {
 	DurationMs int64  `json:"duration_ms"`
 }
 
-// webhookPayload is the JSON body sent to webhook targets.
+// webhookPayload is the JSON body sent to generic webhook targets.
 type webhookPayload struct {
 	Event     string     `json:"event"`
 	Task      TaskInfo   `json:"task"`
 	Result    ResultInfo `json:"result"`
 	Timestamp int64      `json:"timestamp"`
+}
+
+// n8nPayload is a flat JSON body for n8n webhook nodes.
+type n8nPayload struct {
+	Event       string `json:"event"`
+	TaskID      string `json:"task_id"`
+	TaskName    string `json:"task_name"`
+	Command     string `json:"command"`
+	Success     bool   `json:"success"`
+	Message     string `json:"message"`
+	DurationMs  int64  `json:"duration_ms"`
+	Timestamp   int64  `json:"timestamp"`
+}
+
+// homeAssistantPayload is the JSON body for Home Assistant webhooks.
+type homeAssistantPayload struct {
+	Message    string `json:"message"`
+	TaskName   string `json:"task_name"`
+	Success    bool   `json:"success"`
+	DurationMs int64  `json:"duration_ms"`
+	Output     string `json:"output"`
+	Timestamp  int64  `json:"timestamp"`
+}
+
+// ValidWebhookFormats lists supported webhook_format values.
+var ValidWebhookFormats = map[string]bool{
+	"generic": true, "n8n": true, "discord": true,
+	"slack": true, "home_assistant": true, "uptime_kuma": true,
+}
+
+// ValidateWebhookFormat returns an error if format is non-empty and unknown.
+func ValidateWebhookFormat(format string) error {
+	if format == "" {
+		return nil
+	}
+	if !ValidWebhookFormats[format] {
+		return fmt.Errorf("invalid webhook_format: %s", format)
+	}
+	return nil
 }
 
 // Send dispatches notifications for all matching configs.
@@ -80,7 +122,7 @@ func Send(configs []Config, task TaskInfo, result ResultInfo) {
 func dispatch(cfg Config, task TaskInfo, result ResultInfo) error {
 	switch cfg.Type {
 	case "webhook":
-		return sendWebhook(cfg.Target, task, result)
+		return sendWebhook(cfg, task, result)
 	case "email":
 		return sendEmail(cfg, task, result)
 	case "telegram":
@@ -129,21 +171,115 @@ func validateWebhookURL(rawURL string) error {
 	return nil
 }
 
-func sendWebhook(webhookURL string, task TaskInfo, result ResultInfo) error {
+func webhookFormat(cfg Config) string {
+	if cfg.WebhookFormat == "" {
+		return "generic"
+	}
+	return cfg.WebhookFormat
+}
+
+func buildStatusMessage(task TaskInfo, result ResultInfo) string {
+	status := "FAILED"
+	emoji := "\u274c"
+	if result.Success {
+		status = "SUCCESS"
+		emoji = "\u2705"
+	}
+	msg := result.Message
+	if len(msg) > 500 {
+		msg = msg[:500] + "..."
+	}
+	return fmt.Sprintf("%s %s — %s (%dms)\n```%s```", emoji, status, task.Name, result.DurationMs, msg)
+}
+
+func sendWebhook(cfg Config, task TaskInfo, result ResultInfo) error {
+	webhookURL := cfg.Target
 	if err := validateWebhookURL(webhookURL); err != nil {
 		return fmt.Errorf("webhook validation: %w", err)
 	}
-	payload := webhookPayload{
-		Event:     "task_completed",
-		Task:      task,
-		Result:    result,
-		Timestamp: time.Now().Unix(),
+
+	format := webhookFormat(cfg)
+	ts := time.Now().Unix()
+
+	switch format {
+	case "uptime_kuma":
+		return sendUptimeKumaWebhook(webhookURL, task, result)
+	case "n8n":
+		body, err := json.Marshal(n8nPayload{
+			Event: "task_completed", TaskID: task.ID, TaskName: task.Name,
+			Command: task.Command, Success: result.Success, Message: result.Message,
+			DurationMs: result.DurationMs, Timestamp: ts,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	case "discord":
+		body, err := json.Marshal(map[string]string{"content": buildStatusMessage(task, result)})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	case "slack":
+		body, err := json.Marshal(map[string]string{"text": buildStatusMessage(task, result)})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	case "home_assistant":
+		status := "failed"
+		if result.Success {
+			status = "succeeded"
+		}
+		body, err := json.Marshal(homeAssistantPayload{
+			Message: fmt.Sprintf("Task %s %s", task.Name, status),
+			TaskName: task.Name, Success: result.Success,
+			DurationMs: result.DurationMs, Output: result.Message, Timestamp: ts,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	default: // generic
+		body, err := json.Marshal(webhookPayload{
+			Event: "task_completed", Task: task, Result: result, Timestamp: ts,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
 	}
-	body, err := json.Marshal(payload)
+}
+
+func sendUptimeKumaWebhook(webhookURL string, task TaskInfo, result ResultInfo) error {
+	status := "down"
+	if result.Success {
+		status = "up"
+	}
+	msg := fmt.Sprintf("%s: %s", task.Name, result.Message)
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	u, err := url.Parse(webhookURL)
 	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
+		return fmt.Errorf("parse URL: %w", err)
 	}
-	resp, err := httpClient.Post(webhookURL, "application/json", bytes.NewReader(body))
+	q := u.Query()
+	q.Set("status", status)
+	q.Set("msg", msg)
+	q.Set("ping", strconv.FormatInt(result.DurationMs, 10))
+	u.RawQuery = q.Encode()
+	return postWebhook(u.String(), "application/json", nil)
+}
+
+func postWebhook(webhookURL, contentType string, body []byte) error {
+	var resp *http.Response
+	var err error
+	if body == nil {
+		resp, err = httpClient.Post(webhookURL, contentType, http.NoBody)
+	} else {
+		resp, err = httpClient.Post(webhookURL, contentType, bytes.NewReader(body))
+	}
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", webhookURL, err)
 	}
