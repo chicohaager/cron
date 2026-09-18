@@ -52,6 +52,12 @@ func startSchedule(t *Task) {
 // startIntervalSchedule binds the ticker channel once, so the goroutine
 // never reads t.ticker after clearSchedule has nilled it. Caller holds mu.
 func startIntervalSchedule(t *Task) {
+	if t.Interval <= 0 {
+		// validation rejects this; the guard keeps a bad persisted value
+		// from panicking NewTicker while the caller holds mu
+		log.Printf("task %s: interval %s is not positive, not scheduled", t.ID, t.Interval)
+		return
+	}
 	ticker := time.NewTicker(t.Interval)
 	done := make(chan struct{})
 	t.ticker, t.done = ticker, done

@@ -97,7 +97,7 @@
       </div>
       <div class="field" id="intervalField">
         <label for="intervalInput" data-i18n="form.interval">Every N minutes</label>
-        <input id="intervalInput" type="number" min="1" step="1" data-i18n-ph="form.intervalPh">
+        <input id="intervalInput" type="number" min="1" max="527040" step="1" data-i18n-ph="form.intervalPh">
       </div>
       <div class="field" id="cronField" hidden>
         <label for="cronInput" data-i18n="form.cron">Cron expression</label>
@@ -125,7 +125,7 @@
         <div class="grid-2">
           <div class="field">
             <label for="timeoutInput" data-i18n="form.timeout">Timeout (seconds)</label>
-            <input id="timeoutInput" type="number" min="0" step="1" placeholder="120">
+            <input id="timeoutInput" type="number" min="0" max="31622400" step="1" placeholder="120">
           </div>
           <div class="field">
             <label for="maxLogsInput" data-i18n="form.maxLogs">History entries</label>
@@ -137,7 +137,7 @@
           </div>
           <div class="field">
             <label for="retryDelayInput" data-i18n="form.retryDelay">Retry delay</label>
-            <input id="retryDelayInput" type="number" min="0" step="1" placeholder="10">
+            <input id="retryDelayInput" type="number" min="0" max="31622400" step="1" placeholder="10">
           </div>
         </div>
         <div class="field">
