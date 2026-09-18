@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +45,33 @@ func newMux(verify func(http.Handler) http.Handler) *http.ServeMux {
 	guarded("/settings", settingsHandler)
 	guarded("/settings/test-telegram", testTelegramHandler)
 	return mux
+}
+
+// staticDir is where the sysext ships the UI. On ZimaOS the gateway serves
+// it directly under /modules/cron/; the daemon serves it too so the UI works
+// when reached at its loopback port without a gateway (development, probes).
+const staticDir = "/usr/share/casaos/www/modules/cron"
+
+func withStatic(next http.Handler) http.Handler {
+	dir := staticDir
+	if env := os.Getenv("CRON_STATIC_DIR"); env != "" {
+		dir = env
+	}
+	files := http.StripPrefix("/modules/cron/", http.FileServer(http.Dir(dir)))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/" || r.URL.Path == "/modules/cron":
+			http.Redirect(w, r, "/modules/cron/", http.StatusFound)
+		case strings.HasPrefix(r.URL.Path, "/modules/cron/"):
+			if strings.Contains(r.URL.Path, "..") {
+				http.NotFound(w, r)
+				return
+			}
+			files.ServeHTTP(w, r)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
 }
 
 // --- response helpers ---

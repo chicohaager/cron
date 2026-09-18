@@ -1,11 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="64" height="64">
+  <!-- Clock on the rounded white tile ZimaOS uses for built-in apps. The
+       dial fills the tile like the stock icons do (issue #3: the old one was
+       ~25 % smaller than its neighbours); colours follow the ZFW palette
+       (forest green accent) so the module family reads as one. -->
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4c8dff"/>
-      <stop offset="1" stop-color="#2ecc71"/>
+      <stop offset="0" stop-color="#2E7D5B"/>
+      <stop offset="1" stop-color="#234B3E"/>
     </linearGradient>
   </defs>
-  <rect x="12" y="12" width="104" height="104" rx="22" fill="#ffffff" stroke="#e6e8eb" stroke-width="2"/>
-  <circle cx="64" cy="64" r="28" fill="none" stroke="url(#g)" stroke-width="8"/>
-  <path d="M64 40 L64 64 L86 64" stroke="#2b3a67" stroke-width="8" fill="none" stroke-linecap="round"/>
+  <rect x="8" y="8" width="112" height="112" rx="26" fill="#ffffff" stroke="#e6e8eb" stroke-width="2"/>
+  <circle cx="64" cy="64" r="38" fill="none" stroke="url(#g)" stroke-width="9"/>
+  <path d="M64 36 L64 64 L90 64" stroke="#0F1F1A" stroke-width="9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="64" r="5" fill="#0F1F1A"/>
 </svg>

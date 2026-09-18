@@ -1,222 +1,268 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-    <title data-i18n="title">Scheduler</title>
-    <link rel="stylesheet" href="styles.css?v=0.2.1">
-    <link rel="icon" type="image/svg+xml" href="favicon.svg" sizes="64x64">
-  </head>
-  <body>
-    <header class="app-header">
-      <h1 data-i18n="header">Scheduler</h1>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-        <button id="settingsToggle" class="theme-btn" title="Settings" aria-label="Settings">&#9881;</button>
-        <button id="themeToggle" class="theme-btn" title="Toggle theme">&#9790;</button>
-        <label class="muted" for="langSelect" data-i18n="lang">Language</label>
-        <select id="langSelect">
-          <option value="en" selected>English</option>
-          <option value="zh">中文</option>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <title data-i18n="app.title">Cron</title>
+  <link rel="stylesheet" href="styles.css?v=0.3.0">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+</head>
+<body>
+<div class="app">
+  <header class="app-header">
+    <div class="brand">
+      <img src="appicon.svg" alt="">
+      <div>
+        <h1 data-i18n="app.title">Cron</h1>
+        <p data-i18n="app.subtitle">Task scheduler for ZimaOS</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button id="exportBtn" class="sm" data-i18n="nav.export">Export</button>
+      <button id="importBtn" class="sm" data-i18n="nav.import">Import</button>
+      <input id="importFile" type="file" accept="application/json,.json" hidden>
+      <select id="langSelect" class="compact" aria-label="Language" data-i18n-title="nav.language">
+        <option value="en">English</option>
+        <option value="de">Deutsch</option>
+        <option value="fr">Français</option>
+        <option value="zh">中文</option>
+      </select>
+      <button id="themeToggle" class="icon-btn ghost" data-i18n-title="nav.theme" aria-label="Toggle dark mode">&#9790;</button>
+      <button id="settingsBtn" class="icon-btn ghost" data-i18n-title="nav.settings" aria-label="Settings">&#9881;</button>
+    </div>
+  </header>
+
+  <div id="banner" class="notice banner" hidden></div>
+
+  <section class="stats">
+    <div class="stat accent"><div class="label" data-i18n="stats.total">Tasks</div><div class="value" id="statTotal">–</div></div>
+    <div class="stat"><div class="label" data-i18n="stats.running">Active</div><div class="value" id="statRunning">–</div></div>
+    <div class="stat"><div class="label" data-i18n="stats.paused">Paused</div><div class="value" id="statPaused">–</div></div>
+    <div class="stat"><div class="label" data-i18n="stats.lastRun">Last run</div><div class="value" id="statLastRun" style="font-size:16px">–</div></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2 data-i18n="tasks.title">Tasks</h2>
+      <select id="filterCategory" class="compact"></select>
+      <select id="filterTag" class="compact"></select>
+      <span class="spacer"></span>
+      <button id="runAllBtn" data-i18n="tasks.runAll">Run all now</button>
+      <button id="newTaskBtn" class="primary" data-i18n="tasks.new">New task</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="col.name">Name</th>
+            <th data-i18n="col.schedule">Schedule</th>
+            <th data-i18n="col.status">Status</th>
+            <th data-i18n="col.next">Next run</th>
+            <th data-i18n="col.last">Last result</th>
+            <th data-i18n="col.actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="taskBody"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<!-- create / edit -->
+<div class="modal-overlay" id="taskModal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
+    <h3 id="taskModalTitle" data-i18n="form.createTitle">New task</h3>
+    <div class="body">
+      <div id="formNotice" class="notice bad" hidden></div>
+      <div class="field" id="templateField">
+        <label for="templateSelect" data-i18n="form.template">Start from a template</label>
+        <select id="templateSelect"></select>
+      </div>
+      <div class="field">
+        <label for="nameInput" data-i18n="form.name">Name</label>
+        <input id="nameInput" type="text" data-i18n-ph="form.namePh" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="commandInput" data-i18n="form.command">Command</label>
+        <textarea id="commandInput" rows="3" data-i18n-ph="form.commandPh" spellcheck="false"></textarea>
+        <span class="hint" data-i18n="form.commandHint">Runs as root via /bin/sh.</span>
+      </div>
+      <div class="field">
+        <label for="typeSelect" data-i18n="form.scheduleType">Schedule</label>
+        <select id="typeSelect">
+          <option value="interval" data-i18n="form.typeInterval">Interval (minutes)</option>
+          <option value="cron" data-i18n="form.typeCron">Cron expression</option>
         </select>
       </div>
-    </header>
-    <main class="app-main">
-      <section class="content">
-        <div class="card">
-          <div class="list-header">
-            <h2 data-i18n="taskList">Task List</h2>
-            <div class="list-actions">
-              <button id="runAllBtn" data-i18n="runAll">Run All Once</button>
-              <button id="openCreateModalBtn" class="primary" data-i18n="newTask">New Task</button>
-            </div>
-          </div>
-          <div class="filter-bar">
-            <select id="filterCategory">
-              <option value="" data-i18n-opt="filterAll">All Categories</option>
-            </select>
-            <select id="filterTag">
-              <option value="" data-i18n-opt="filterAllTags">All Tags</option>
-            </select>
-          </div>
-          <table class="tasks-table">
-            <thead>
-              <tr>
-                <th data-i18n="colName">Name</th>
-                <th data-i18n="colCmd">Command</th>
-                <th data-i18n="colStatus">Status</th>
-                <th data-i18n="colNext">Next Run</th>
-                <th data-i18n="colLast">Last Result</th>
-                <th data-i18n="colActions">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="taskTableBody"></tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-    <div class="modal-overlay" id="createTaskModal">
-      <div class="modal">
-        <h3 id="taskModalTitle" data-i18n="createTitle">Create Task</h3>
-        <div class="modal-body">
-        <div class="form-row" id="templateRow">
-          <label for="templateSelect" data-i18n="template">Start from Template</label>
-          <select id="templateSelect">
-            <option value="" data-i18n-opt="noTemplate">-- Blank Task --</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label for="taskNameInput" data-i18n="name">Task Name</label>
-          <input id="taskNameInput" type="text" placeholder="e.g., Daily Backup" data-i18n-ph="phName">
-        </div>
-        <div class="form-row">
-          <label for="commandInput" data-i18n="cmd">Command</label>
-          <textarea id="commandInput" rows="3" placeholder="e.g., bash /path/to/script.sh" data-i18n-ph="phCmd"></textarea>
-        </div>
-        <div class="form-row">
-          <label for="scheduleTypeSelect" data-i18n="plan">Schedule Type</label>
-          <select id="scheduleTypeSelect">
-            <option value="interval" data-i18n-opt="optInterval">Interval (minutes)</option>
-            <option value="cron" data-i18n-opt="optCron">Cron Expression</option>
-          </select>
-        </div>
-        <div class="form-row" id="rowInterval">
-          <label for="intervalInput" data-i18n="interval">Interval (minutes)</label>
-          <input id="intervalInput" type="number" min="1" step="1" placeholder="e.g., 60" data-i18n-ph="phInterval">
-        </div>
-        <div class="form-row hidden" id="rowCron">
-          <label for="cronInput" data-i18n="cron">Cron Expression</label>
-          <input id="cronInput" type="text" placeholder="e.g., */5 * * * *" data-i18n-ph="phCron">
-          <div id="cronFeedback" class="cron-feedback"></div>
-        </div>
-        <div class="form-row">
-          <label for="categoryInput" data-i18n="category">Category</label>
-          <input id="categoryInput" type="text" list="categoryList" placeholder="e.g., backup" data-i18n-ph="phCategory">
+      <div class="field" id="intervalField">
+        <label for="intervalInput" data-i18n="form.interval">Every N minutes</label>
+        <input id="intervalInput" type="number" min="1" step="1" data-i18n-ph="form.intervalPh">
+      </div>
+      <div class="field" id="cronField" hidden>
+        <label for="cronInput" data-i18n="form.cron">Cron expression</label>
+        <input id="cronInput" type="text" class="mono" data-i18n-ph="form.cronPh" autocomplete="off" spellcheck="false">
+        <div id="cronFeedback" class="cron-feedback"></div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label for="categoryInput" data-i18n="form.category">Category</label>
+          <input id="categoryInput" type="text" list="categoryList" data-i18n-ph="form.categoryPh" autocomplete="off">
           <datalist id="categoryList"></datalist>
         </div>
-        <div class="form-row">
-          <label for="tagsInput" data-i18n="tags">Tags (comma-separated)</label>
-          <input id="tagsInput" type="text" placeholder="e.g., critical, daily" data-i18n-ph="phTags">
-        </div>
-        <div class="form-row">
-          <label for="priorityInput" data-i18n="priority">Priority (1-10)</label>
-          <input id="priorityInput" type="number" min="1" max="10" step="1" placeholder="5" data-i18n-ph="phPriority">
-        </div>
-        <details class="advanced-toggle">
-          <summary data-i18n="advancedOptions">Advanced Options</summary>
-          <div class="form-row">
-            <label for="timeoutInput" data-i18n="timeout">Timeout (seconds)</label>
-            <input id="timeoutInput" type="number" min="0" step="1" placeholder="120" data-i18n-ph="phTimeout">
-          </div>
-          <div class="form-row">
-            <label for="retryCountInput" data-i18n="retryCount">Retry Count</label>
-            <input id="retryCountInput" type="number" min="0" max="10" step="1" placeholder="0" data-i18n-ph="phRetryCount">
-          </div>
-          <div class="form-row">
-            <label for="retryDelayInput" data-i18n="retryDelay">Retry Delay (seconds)</label>
-            <input id="retryDelayInput" type="number" min="0" step="1" placeholder="10" data-i18n-ph="phRetryDelay">
-          </div>
-          <div class="form-row">
-            <label data-i18n="envVars">Environment Variables</label>
-            <div id="envContainer"></div>
-            <button type="button" id="addEnvBtn" data-i18n="addEnv">+ Add Variable</button>
-          </div>
-          <div class="form-row">
-            <label for="maxLogEntriesInput" data-i18n="maxLogEntries">Max Log Entries</label>
-            <input id="maxLogEntriesInput" type="number" min="1" max="10000" step="1" placeholder="100" data-i18n-ph="phMaxLogs">
-          </div>
-          <div class="form-row">
-            <label data-i18n="dependsOn">Depends On</label>
-            <select id="dependsOnSelect" multiple size="3"></select>
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="allowParallelCheck"> <span data-i18n="allowParallel">Allow parallel execution</span></label>
-            </div>
-          </div>
-          <div class="form-row">
-            <label data-i18n="webhookLabel">Webhook Notification</label>
-            <label for="webhookFormatSelect" data-i18n="webhookFormat">Webhook Type</label>
-            <select id="webhookFormatSelect">
-              <option value="generic" data-i18n-opt="webhookGeneric">Generic (JSON)</option>
-              <option value="n8n" data-i18n-opt="webhookN8n">n8n</option>
-              <option value="discord" data-i18n-opt="webhookDiscord">Discord</option>
-              <option value="slack" data-i18n-opt="webhookSlack">Slack</option>
-              <option value="home_assistant" data-i18n-opt="webhookHA">Home Assistant</option>
-              <option value="uptime_kuma" data-i18n-opt="webhookKuma">Uptime Kuma</option>
-            </select>
-            <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" data-i18n-ph="phWebhookUrl">
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="notifyOnSuccess"> <span data-i18n="onSuccess">On Success</span></label>
-              <label><input type="checkbox" id="notifyOnFailure" checked> <span data-i18n="onFailure">On Failure</span></label>
-            </div>
-          </div>
-          <div class="form-row">
-            <label data-i18n="emailLabel">Email Notification (SMTP)</label>
-            <input id="emailToInput" type="email" placeholder="recipient@example.com" data-i18n-ph="phEmailTo">
-            <div class="smtp-grid">
-              <input id="smtpHostInput" type="text" placeholder="smtp.gmail.com">
-              <input id="smtpPortInput" type="number" placeholder="587" min="1" max="65535">
-            </div>
-            <div class="smtp-grid">
-              <input id="smtpUserInput" type="text" placeholder="user@gmail.com">
-              <input id="smtpPassInput" type="password" placeholder="app password">
-            </div>
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="emailOnSuccess"> <span data-i18n="onSuccess">On Success</span></label>
-              <label><input type="checkbox" id="emailOnFailure" checked> <span data-i18n="onFailure">On Failure</span></label>
-            </div>
-          </div>
-        </details>
-        </div>
-        <div class="modal-actions">
-          <button id="cancelCreateBtn" data-i18n="cancel">Cancel</button>
-          <button id="createTaskBtn" class="primary" data-i18n="create">Create</button>
+        <div class="field">
+          <label for="priorityInput" data-i18n="form.priority">Priority</label>
+          <input id="priorityInput" type="number" min="1" max="10" step="1" placeholder="5">
         </div>
       </div>
-    </div>
-    <div class="modal-overlay" id="confirmModal">
-      <div class="modal modal-sm">
-        <h3 data-i18n="deleteConfirmTitle">Delete Task?</h3>
-        <div class="modal-body">
-          <p id="confirmMessage" class="muted"></p>
-        </div>
-        <div class="modal-actions">
-          <button id="confirmCancelBtn" data-i18n="cancel">Cancel</button>
-          <button id="confirmOkBtn" class="danger" data-i18n="deleteConfirmBtn">Delete</button>
-        </div>
+      <div class="field">
+        <label for="tagsInput" data-i18n="form.tags">Tags</label>
+        <input id="tagsInput" type="text" data-i18n-ph="form.tagsPh" autocomplete="off">
       </div>
-    </div>
-    <div class="modal-overlay" id="settingsModal">
-      <div class="modal">
-        <h3 data-i18n="settingsTitle">Settings</h3>
-        <div class="modal-body">
-          <p class="muted" style="font-size:12px;margin:0 0 12px" data-i18n="settingsDesc">Configure global notification settings. Telegram notifications apply to all tasks.</p>
-          <div class="form-row">
-            <label for="tgBotToken" data-i18n="tgBotToken">Telegram Bot Token</label>
-            <div class="input-masked-wrap">
-              <input id="tgBotToken" type="password" placeholder="123456:ABC-DEF..." autocomplete="off">
-              <button type="button" id="tgTokenReveal" class="reveal-btn" title="Show/hide">&#128065;</button>
+
+      <details class="advanced">
+        <summary data-i18n="form.advanced">Advanced options</summary>
+        <div class="grid-2">
+          <div class="field">
+            <label for="timeoutInput" data-i18n="form.timeout">Timeout (seconds)</label>
+            <input id="timeoutInput" type="number" min="0" step="1" placeholder="120">
+          </div>
+          <div class="field">
+            <label for="maxLogsInput" data-i18n="form.maxLogs">History entries</label>
+            <input id="maxLogsInput" type="number" min="1" max="10000" step="1" placeholder="100">
+          </div>
+          <div class="field">
+            <label for="retryCountInput" data-i18n="form.retryCount">Retries</label>
+            <input id="retryCountInput" type="number" min="0" max="10" step="1" placeholder="0">
+          </div>
+          <div class="field">
+            <label for="retryDelayInput" data-i18n="form.retryDelay">Retry delay</label>
+            <input id="retryDelayInput" type="number" min="0" step="1" placeholder="10">
+          </div>
+        </div>
+        <div class="field">
+          <label data-i18n="form.env">Environment variables</label>
+          <div id="envRows"></div>
+          <button type="button" id="addEnvBtn" class="sm" data-i18n="form.addEnv">+ Add variable</button>
+        </div>
+        <div class="field">
+          <label for="dependsSelect" data-i18n="form.dependsOn">Depends on</label>
+          <select id="dependsSelect" multiple size="3"></select>
+          <span class="hint" data-i18n="form.dependsOnHint"></span>
+        </div>
+        <div class="field">
+          <div class="check-row">
+            <label><input type="checkbox" id="allowParallelCheck"> <span data-i18n="form.allowParallel">Allow overlapping runs</span></label>
+          </div>
+          <span class="hint" data-i18n="form.allowParallelHint"></span>
+        </div>
+
+        <fieldset>
+          <legend data-i18n="form.webhook">Webhook</legend>
+          <div class="grid-3-1">
+            <div class="field">
+              <label for="webhookUrlInput" data-i18n="form.webhookUrl">URL</label>
+              <input id="webhookUrlInput" type="url" placeholder="https://…" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="webhookFormatSelect" data-i18n="form.webhookFormat">Format</label>
+              <select id="webhookFormatSelect"></select>
             </div>
           </div>
-          <div class="form-row">
-            <label for="tgChatId" data-i18n="tgChatId">Telegram Chat ID</label>
-            <input id="tgChatId" type="text" placeholder="-1001234567890">
+          <div class="check-row">
+            <label><input type="checkbox" id="webhookOnSuccess"> <span data-i18n="form.onSuccess">On success</span></label>
+            <label><input type="checkbox" id="webhookOnFailure" checked> <span data-i18n="form.onFailure">On failure</span></label>
           </div>
-          <div class="form-row">
-            <div class="checkbox-row">
-              <label><input type="checkbox" id="tgNotifySuccess"> <span data-i18n="onSuccess">On Success</span></label>
-              <label><input type="checkbox" id="tgNotifyFailure" checked> <span data-i18n="onFailure">On Failure</span></label>
+        </fieldset>
+
+        <fieldset>
+          <legend data-i18n="form.email">E-mail (SMTP)</legend>
+          <div class="grid-2">
+            <div class="field">
+              <label for="emailToInput" data-i18n="form.emailTo">Recipient</label>
+              <input id="emailToInput" type="email" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="smtpHostInput" data-i18n="form.smtpHost">SMTP server</label>
+              <input id="smtpHostInput" type="text" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="smtpUserInput" data-i18n="form.smtpUser">User</label>
+              <input id="smtpUserInput" type="text" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="smtpPassInput" data-i18n="form.smtpPass">Password</label>
+              <input id="smtpPassInput" type="password" autocomplete="new-password">
+            </div>
+            <div class="field">
+              <label for="smtpPortInput" data-i18n="form.smtpPort">Port</label>
+              <input id="smtpPortInput" type="number" min="1" max="65535" placeholder="587">
             </div>
           </div>
-          <div id="tgTestResult"></div>
-        </div>
-        <div class="modal-actions">
-          <button id="tgTestBtn" style="margin-right:auto" data-i18n="tgTest">Test</button>
-          <button id="settingsCancelBtn" data-i18n="cancel">Cancel</button>
-          <button id="settingsSaveBtn" class="primary" data-i18n="save">Save</button>
-        </div>
-      </div>
+          <div class="check-row">
+            <label><input type="checkbox" id="emailOnSuccess"> <span data-i18n="form.onSuccess">On success</span></label>
+            <label><input type="checkbox" id="emailOnFailure" checked> <span data-i18n="form.onFailure">On failure</span></label>
+          </div>
+        </fieldset>
+      </details>
     </div>
-    <script>window.API_BASE=''</script>
-    <script src="app.js?v=0.2.1"></script>
-  </body>
-  </html>
+    <div class="foot">
+      <button id="taskCancelBtn" data-i18n="form.cancel">Cancel</button>
+      <button id="taskSaveBtn" class="primary" data-i18n="form.create">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- confirm -->
+<div class="modal-overlay" id="confirmModal" hidden>
+  <div class="modal sm" role="alertdialog" aria-modal="true">
+    <h3 id="confirmTitle"></h3>
+    <div class="body"><p id="confirmText"></p></div>
+    <div class="foot">
+      <button id="confirmCancelBtn" data-i18n="form.cancel">Cancel</button>
+      <button id="confirmOkBtn" class="danger"></button>
+    </div>
+  </div>
+</div>
+
+<!-- settings -->
+<div class="modal-overlay" id="settingsModal" hidden>
+  <div class="modal sm" role="dialog" aria-modal="true">
+    <h3 data-i18n="settings.title">Settings</h3>
+    <div class="body">
+      <p class="muted" style="margin-bottom:12px" data-i18n="settings.desc"></p>
+      <div class="field">
+        <label for="tgTokenInput" data-i18n="settings.tgToken">Telegram bot token</label>
+        <input id="tgTokenInput" type="password" placeholder="123456:ABC-DEF…" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="tgChatInput" data-i18n="settings.tgChat">Telegram chat ID</label>
+        <input id="tgChatInput" type="text" placeholder="-1001234567890" autocomplete="off">
+      </div>
+      <div class="check-row">
+        <label><input type="checkbox" id="tgOnSuccess"> <span data-i18n="form.onSuccess">On success</span></label>
+        <label><input type="checkbox" id="tgOnFailure" checked> <span data-i18n="form.onFailure">On failure</span></label>
+      </div>
+      <div id="settingsNotice" class="notice" hidden style="margin-top:12px"></div>
+    </div>
+    <div class="foot">
+      <button id="tgTestBtn" class="left" data-i18n="settings.test">Send test message</button>
+      <button id="settingsCancelBtn" data-i18n="form.cancel">Cancel</button>
+      <button id="settingsSaveBtn" class="primary" data-i18n="settings.save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- import result -->
+<div class="modal-overlay" id="importModal" hidden>
+  <div class="modal sm" role="dialog" aria-modal="true">
+    <h3 data-i18n="import.title">Import tasks</h3>
+    <div class="body" id="importBody"></div>
+    <div class="foot"><button id="importCloseBtn" class="primary">OK</button></div>
+  </div>
+</div>
+
+<script src="i18n.js?v=0.3.0"></script>
+<script src="app.js?v=0.3.0"></script>
+</body>
+</html>

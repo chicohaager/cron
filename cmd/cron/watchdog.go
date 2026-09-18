@@ -14,6 +14,10 @@ import (
 // content differs, so an upgrade with changed units takes effect and an
 // unchanged one is a no-op.
 func installWatchdog() {
+	if os.Geteuid() != 0 {
+		log.Printf("[cron] not root, skipping watchdog install")
+		return
+	}
 	if _, err := os.Stat("/run/systemd/system"); err != nil {
 		log.Printf("[cron] Systemd not detected, skipping watchdog install")
 		return

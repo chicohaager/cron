@@ -1,49 +1,682 @@
-const API_BASE=(window.API_BASE||'').replace(/\/$/,'');let tasks=[];const i18n={zh:{title:'定时管理器',header:'定时管理器',lang:'语言',taskList:'任务列表',runAll:'全部运行一次',newTask:'新建任务',colName:'名称',colCmd:'命令',colStatus:'状态',colNext:'下次执行',colLast:'上次结果',colActions:'操作',createTitle:'创建任务',name:'任务名称',cmd:'执行命令',plan:'计划类型',optInterval:'间隔分钟',optCron:'cron 表达式',interval:'执行间隔（分钟）',cron:'cron 表达式',cancel:'取消',create:'创建',phName:'例如：每日备份',phCmd:'例如：bash /path/to/script.sh',phInterval:'例如：60',phCron:'例如：*/5 * * * *',statusRunning:'运行中',statusPaused:'已暂停',statusExecuting:'执行中...',btnRun:'运行一次',btnPause:'暂停',btnResume:'恢复',btnLogsShow:'查看日志',btnLogsHide:'隐藏日志',logsTitle:'日志 · ',btnClearLogs:'清空日志',btnDelete:'删除任务',advancedOptions:'高级选项',timeout:'超时（秒）',retryCount:'重试次数',retryDelay:'重试间隔（秒）',envVars:'环境变量',addEnv:'+ 添加变量',phTimeout:'120',phRetryCount:'0',phRetryDelay:'10',envKey:'键',envValue:'值',removeEnv:'删除',webhookLabel:'Webhook 通知',phWebhookUrl:'https://example.com/webhook',onSuccess:'成功时',onFailure:'失败时',category:'分类',tags:'标签（逗号分隔）',priority:'优先级（1-10）',phCategory:'例如：备份',phTags:'例如：关键, 每日',phPriority:'5',filterAll:'全部分类',filterAllTags:'全部标签',dependsOn:'依赖任务',allowParallel:'允许并行执行',depSkipped:'依赖未满足',logSearch:'搜索日志...',exportCsv:'导出CSV',exportJson:'导出JSON',maxLogEntries:'最大日志数',phMaxLogs:'100',cronValid:'表达式有效',cronInvalid:'表达式无效',nextRuns:'接下来执行：',template:'从模板开始',noTemplate:'-- 空白任务 --',emailLabel:'邮件通知 (SMTP)',phEmailTo:'收件人@example.com',settingsTitle:'设置',settingsDesc:'配置全局通知设置。Telegram通知适用于所有任务。',tgBotToken:'Telegram Bot Token',tgChatId:'Telegram Chat ID',tgTest:'测试',save:'保存',tgTestOk:'消息已发送！',tgTestFail:'发送失败',btnEdit:'编辑',editTitle:'编辑任务',save:'保存',webhookFormat:'Webhook 类型',webhookGeneric:'通用 (JSON)',webhookN8n:'n8n',webhookDiscord:'Discord',webhookSlack:'Slack',webhookHA:'Home Assistant',webhookKuma:'Uptime Kuma',deleteConfirmTitle:'删除任务？',deleteConfirmMsg:'确定要删除任务 "{name}" 吗？此操作无法撤销。',deleteConfirmBtn:'删除'},en:{title:'Scheduler',header:'Scheduler',lang:'Language',taskList:'Tasks',runAll:'Run All Once',newTask:'New Task',colName:'Name',colCmd:'Command',colStatus:'Status',colNext:'Next Run',colLast:'Last Result',colActions:'Actions',createTitle:'Create Task',name:'Task Name',cmd:'Command',plan:'Schedule Type',optInterval:'Interval (minutes)',optCron:'Cron Expression',interval:'Interval (minutes)',cron:'Cron Expression',cancel:'Cancel',create:'Create',phName:'e.g. Daily Backup',phCmd:'e.g. bash /path/to/script.sh',phInterval:'e.g. 60',phCron:'e.g. */5 * * * *',statusRunning:'Running',statusPaused:'Paused',statusExecuting:'Executing...',btnRun:'Run Once',btnPause:'Pause',btnResume:'Resume',btnLogsShow:'Show Logs',btnLogsHide:'Hide Logs',logsTitle:'Logs · ',btnClearLogs:'Clear Logs',btnDelete:'Delete Task',advancedOptions:'Advanced Options',timeout:'Timeout (seconds)',retryCount:'Retry Count',retryDelay:'Retry Delay (seconds)',envVars:'Environment Variables',addEnv:'+ Add Variable',phTimeout:'120',phRetryCount:'0',phRetryDelay:'10',envKey:'Key',envValue:'Value',removeEnv:'Remove',webhookLabel:'Webhook Notification',phWebhookUrl:'https://example.com/webhook',onSuccess:'On Success',onFailure:'On Failure',category:'Category',tags:'Tags (comma-separated)',priority:'Priority (1-10)',phCategory:'e.g. backup',phTags:'e.g. critical, daily',phPriority:'5',filterAll:'All Categories',filterAllTags:'All Tags',dependsOn:'Depends On',allowParallel:'Allow parallel execution',depSkipped:'Dep not met',logSearch:'Search logs...',exportCsv:'Export CSV',exportJson:'Export JSON',maxLogEntries:'Max Log Entries',phMaxLogs:'100',cronValid:'Valid expression',cronInvalid:'Invalid expression',nextRuns:'Next runs:',template:'Start from Template',noTemplate:'-- Blank Task --',emailLabel:'Email Notification (SMTP)',phEmailTo:'recipient@example.com',settingsTitle:'Settings',settingsDesc:'Configure global notification settings. Telegram notifications apply to all tasks.',tgBotToken:'Telegram Bot Token',tgChatId:'Telegram Chat ID',tgTest:'Test',save:'Save',tgTestOk:'Message sent!',tgTestFail:'Send failed',btnEdit:'Edit',editTitle:'Edit Task',save:'Save',webhookFormat:'Webhook Type',webhookGeneric:'Generic (JSON)',webhookN8n:'n8n',webhookDiscord:'Discord',webhookSlack:'Slack',webhookHA:'Home Assistant',webhookKuma:'Uptime Kuma',deleteConfirmTitle:'Delete Task?',deleteConfirmMsg:'Are you sure you want to delete "{name}"? This cannot be undone.',deleteConfirmBtn:'Delete'}};let lang='en';let editingTaskId=null;let confirmCallback=null;function byId(id){return document.getElementById(id)}function fmtTime(ts){if(!ts)return '-';const d=new Date(ts);const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`}function escapeHtml(str){return str.replace(/[&<>"]/g,s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[s]))}function isValidCron(expr){return expr.trim().split(/\s+/).length===5}
-function applyI18n(){const t=i18n[lang];if(t.wordSuccess===undefined){t.wordSuccess='Success'}if(t.wordFail===undefined){t.wordFail='Fail'}document.querySelectorAll('[data-i18n]').forEach(el=>{const k=el.getAttribute('data-i18n');if(t[k])el.textContent=t[k]});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{const k=el.getAttribute('data-i18n-ph');if(t[k])el.setAttribute('placeholder',t[k])});document.querySelectorAll('[data-i18n-opt]').forEach(el=>{const k=el.getAttribute('data-i18n-opt');if(t[k])el.textContent=t[k]});document.title=t.title}
-function addEnvRow(){const container=byId('envContainer');const row=document.createElement('div');row.className='env-row';row.innerHTML='<input type="text" placeholder="KEY" class="env-key"><input type="text" placeholder="VALUE" class="env-val"><button type="button" class="env-remove">&times;</button>';row.querySelector('.env-remove').addEventListener('click',()=>row.remove());container.appendChild(row)}
-function getEnvVars(){const rows=byId('envContainer').querySelectorAll('.env-row');const env={};rows.forEach(r=>{const k=r.querySelector('.env-key').value.trim();const v=r.querySelector('.env-val').value.trim();if(k)env[k]=v});return Object.keys(env).length?env:undefined}
-function clearEnvRows(){byId('envContainer').innerHTML=''}
-function showConfirm(message,onConfirm){confirmCallback=onConfirm;byId('confirmMessage').textContent=message;byId('confirmModal').classList.add('show')}
-function hideConfirm(){byId('confirmModal').classList.remove('show');confirmCallback=null}
-function populateDependsOn(excludeId){const depSel=byId('dependsOnSelect');depSel.innerHTML='';tasks.forEach(t=>{if(excludeId&&t.id===excludeId)return;const o=document.createElement('option');o.value=t.id;o.textContent=t.name;depSel.appendChild(o)})}
-function clearForm(){editingTaskId=null;byId('taskNameInput').value='';byId('commandInput').value='';byId('intervalInput').value='';byId('cronInput').value='';byId('timeoutInput').value='';byId('retryCountInput').value='';byId('retryDelayInput').value='';byId('categoryInput').value='';byId('tagsInput').value='';byId('priorityInput').value='';byId('maxLogEntriesInput').value='';byId('dependsOnSelect').selectedIndex=-1;byId('allowParallelCheck').checked=false;byId('webhookUrlInput').value='';byId('webhookFormatSelect').value='generic';byId('notifyOnSuccess').checked=false;byId('notifyOnFailure').checked=true;byId('emailToInput').value='';byId('smtpHostInput').value='';byId('smtpPortInput').value='';byId('smtpUserInput').value='';byId('smtpPassInput').value='';byId('emailOnSuccess').checked=false;byId('emailOnFailure').checked=true;byId('templateSelect').value='';byId('cronFeedback').className='cron-feedback';byId('cronFeedback').innerHTML='';clearEnvRows();const tdict=i18n[lang];byId('taskModalTitle').textContent=tdict.createTitle;byId('createTaskBtn').textContent=tdict.create;byId('templateRow').classList.remove('hidden')}
-function populateForm(task){const tdict=i18n[lang];byId('taskNameInput').value=task.name||'';byId('commandInput').value=task.command||'';const st=byId('scheduleTypeSelect');st.value=task.type||'interval';st.dispatchEvent(new Event('change'));if(task.type==='interval'&&task.interval_ms){byId('intervalInput').value=Math.round(task.interval_ms/6e10)}if(task.type==='cron'&&task.cron_expr){byId('cronInput').value=task.cron_expr;validateCronInput()}if(task.timeout_sec)byId('timeoutInput').value=task.timeout_sec;if(task.retry_count)byId('retryCountInput').value=task.retry_count;if(task.retry_delay_sec)byId('retryDelayInput').value=task.retry_delay_sec;byId('categoryInput').value=task.category||'';byId('tagsInput').value=(task.tags||[]).join(', ');if(task.priority)byId('priorityInput').value=task.priority;if(task.max_log_entries)byId('maxLogEntriesInput').value=task.max_log_entries;byId('allowParallelCheck').checked=!!task.allow_parallel;clearEnvRows();if(task.env){Object.entries(task.env).forEach(([k,v])=>{addEnvRow();const rows=byId('envContainer').querySelectorAll('.env-row');const row=rows[rows.length-1];row.querySelector('.env-key').value=k;row.querySelector('.env-val').value=v})}const webhook=(task.notifications||[]).find(n=>n.type==='webhook');if(webhook){byId('webhookUrlInput').value=webhook.target||'';byId('webhookFormatSelect').value=webhook.webhook_format||'generic';byId('notifyOnSuccess').checked=!!webhook.on_success;byId('notifyOnFailure').checked=webhook.on_failure!==false}else{byId('webhookUrlInput').value='';byId('webhookFormatSelect').value='generic';byId('notifyOnSuccess').checked=false;byId('notifyOnFailure').checked=true}const email=(task.notifications||[]).find(n=>n.type==='email');if(email){byId('emailToInput').value=email.target||'';byId('smtpHostInput').value=email.smtp_host||'';byId('smtpPortInput').value=email.smtp_port||'';byId('smtpUserInput').value=email.smtp_user||'';byId('smtpPassInput').value=email.smtp_pass||'';byId('emailOnSuccess').checked=!!email.on_success;byId('emailOnFailure').checked=email.on_failure!==false}else{byId('emailToInput').value='';byId('smtpHostInput').value='';byId('smtpPortInput').value='';byId('smtpUserInput').value='';byId('smtpPassInput').value='';byId('emailOnSuccess').checked=false;byId('emailOnFailure').checked=true}populateDependsOn(task.id);(task.depends_on||[]).forEach(depId=>{const opt=byId('dependsOnSelect').querySelector(`option[value="${depId}"]`);if(opt)opt.selected=true});byId('taskModalTitle').textContent=tdict.editTitle;byId('createTaskBtn').textContent=tdict.save;byId('templateRow').classList.add('hidden')}
-function buildSavePayload(){const name=byId('taskNameInput').value.trim();const command=byId('commandInput').value.trim();const scheduleType=byId('scheduleTypeSelect').value;const intervalMin=parseInt(byId('intervalInput').value,10);const cronExpr=byId('cronInput').value.trim();const timeoutSec=parseInt(byId('timeoutInput').value,10)||0;const retryCount=parseInt(byId('retryCountInput').value,10)||0;const retryDelaySec=parseInt(byId('retryDelayInput').value,10)||0;const env=getEnvVars();if(!name||!command)return null;if(scheduleType==='interval'){if(!intervalMin||intervalMin<1)return null}else{if(!isValidCron(cronExpr))return null}const category=byId('categoryInput').value.trim();const tagsRaw=byId('tagsInput').value.trim();const tags=tagsRaw?tagsRaw.split(',').map(s=>s.trim()).filter(Boolean):[];const priority=parseInt(byId('priorityInput').value,10)||0;const webhookUrl=byId('webhookUrlInput').value.trim();const onSuccess=byId('notifyOnSuccess').checked;const onFailure=byId('notifyOnFailure').checked;const payload={name,command,type:scheduleType,interval_min:intervalMin,cron_expr:cronExpr,timeout_sec:timeoutSec,retry_count:retryCount,retry_delay_sec:retryDelaySec};const dependsOn=Array.from(byId('dependsOnSelect').selectedOptions).map(o=>o.value);const allowParallel=byId('allowParallelCheck').checked;if(category)payload.category=category;if(tags.length)payload.tags=tags;if(priority)payload.priority=priority;const maxLogEntries=parseInt(byId('maxLogEntriesInput').value,10)||0;if(dependsOn.length)payload.depends_on=dependsOn;if(allowParallel)payload.allow_parallel=true;if(maxLogEntries>0)payload.max_log_entries=maxLogEntries;if(env)payload.env=env;const notifications=[];if(webhookUrl){const wh={enabled:true,type:'webhook',target:webhookUrl,on_success:onSuccess,on_failure:onFailure};const fmt=byId('webhookFormatSelect').value;if(fmt&&fmt!=='generic')wh.webhook_format=fmt;notifications.push(wh)}const emailTo=byId('emailToInput').value.trim();const smtpHost=byId('smtpHostInput').value.trim();if(emailTo&&smtpHost){const em={enabled:true,type:'email',target:emailTo,on_success:byId('emailOnSuccess').checked,on_failure:byId('emailOnFailure').checked,smtp_host:smtpHost,smtp_port:parseInt(byId('smtpPortInput').value,10)||587,smtp_user:byId('smtpUserInput').value.trim()};const smtpPass=byId('smtpPassInput').value;if(smtpPass)em.smtp_pass=smtpPass;notifications.push(em)}payload.notifications=notifications;return payload}
-// --- Theme Toggle ---
-function initTheme(){const saved=localStorage.getItem('cron_theme');if(saved==='light')document.documentElement.setAttribute('data-theme','light');updateThemeIcon()}
-function toggleTheme(){const cur=document.documentElement.getAttribute('data-theme');if(cur==='light'){document.documentElement.removeAttribute('data-theme');localStorage.setItem('cron_theme','dark')}else{document.documentElement.setAttribute('data-theme','light');localStorage.setItem('cron_theme','light')}updateThemeIcon()}
-function updateThemeIcon(){const btn=byId('themeToggle');if(!btn)return;const isLight=document.documentElement.getAttribute('data-theme')==='light';btn.innerHTML=isLight?'&#9728;':'&#9790;'}
-// --- Templates ---
-let templates=[];
-function loadTemplates(){fetch(`${API_BASE}/cron/templates`).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(d=>{templates=d||[];const sel=byId('templateSelect');if(!sel)return;sel.innerHTML='<option value="">-- Blank Task --</option>';templates.forEach(t=>{const o=document.createElement('option');o.value=t.id;o.textContent=t.name+' — '+t.description;sel.appendChild(o)})}).catch(e=>{console.error('Failed to load templates:',e);setTimeout(loadTemplates,5000)})}
-function applyTemplate(){const sel=byId('templateSelect');if(!sel||!sel.value)return;const t=templates.find(x=>x.id===sel.value);if(!t)return;byId('taskNameInput').value=t.name;byId('commandInput').value=t.command;byId('categoryInput').value=t.category||'';if(t.timeout_sec)byId('timeoutInput').value=t.timeout_sec;const st=byId('scheduleTypeSelect');st.value=t.type;st.dispatchEvent(new Event('change'));if(t.type==='interval'&&t.interval_min)byId('intervalInput').value=t.interval_min;if(t.type==='cron'&&t.cron_expr){byId('cronInput').value=t.cron_expr;validateCronInput()}}
-// --- Settings ---
-function loadSettings(){fetch(`${API_BASE}/cron/settings`).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(d=>{byId('tgBotToken').value=d.telegram_bot_token||'';byId('tgChatId').value=d.telegram_chat_id||'';byId('tgNotifySuccess').checked=!!d.telegram_on_success;byId('tgNotifyFailure').checked=d.telegram_on_failure!==false}).catch(e=>{console.error('Failed to load settings:',e)})}
-function saveSettings(){const token=byId('tgBotToken').value.trim();const chatId=byId('tgChatId').value.trim();const onSuccess=byId('tgNotifySuccess').checked;const onFailure=byId('tgNotifyFailure').checked;fetch(`${API_BASE}/cron/settings`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({telegram_bot_token:token,telegram_chat_id:chatId,telegram_on_success:onSuccess,telegram_on_failure:onFailure})}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(()=>{byId('settingsModal').classList.remove('show')}).catch(e=>{alert('Failed to save: '+e.message)})}
-function testTelegram(){const token=byId('tgBotToken').value.trim();const chatId=byId('tgChatId').value.trim();const el=byId('tgTestResult');const tdict=i18n[lang];el.className='test-result';el.textContent='Sending...';fetch(`${API_BASE}/cron/settings/test-telegram`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bot_token:token,chat_id:chatId})}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(d=>{if(d.success){el.className='test-result ok';el.textContent='\u2705 '+(tdict.tgTestOk||'Message sent!')}else{el.className='test-result err';el.textContent='\u274c '+(tdict.tgTestFail||'Failed')+': '+d.error}}).catch(e=>{el.className='test-result err';el.textContent='\u274c '+e.message})}
-// --- Execution History Chart ---
-function renderExecChart(logs){if(!logs||logs.length<2)return '';const maxBars=30;const recent=logs.slice(0,maxBars).reverse();const w=recent.length*10;const h=32;let bars='';recent.forEach((l,i)=>{const color=l.success?'var(--success)':'var(--danger)';bars+=`<rect x="${i*10}" y="0" width="8" height="${h}" rx="2" fill="${color}" opacity="0.7"><title>${fmtTime(l.time)} — ${l.success?'OK':'FAIL'} (${l.duration_ms}ms)</title></rect>`});return `<div class="exec-chart"><svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${bars}</svg></div>`}
-let cronValidateTimer=null;
-function validateCronInput(){const expr=byId('cronInput').value.trim();const fb=byId('cronFeedback');if(!expr){fb.className='cron-feedback';fb.innerHTML='';return}if(cronValidateTimer)clearTimeout(cronValidateTimer);cronValidateTimer=setTimeout(()=>{fetch(`${API_BASE}/cron/cron/validate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expr})}).then(r=>r.json()).then(d=>{const tdict=i18n[lang];if(d.valid){let html='<span>&#10003; '+(tdict.cronValid||'Valid')+'</span>';if(d.next_runs&&d.next_runs.length){html+='<div class="next-runs">'+(tdict.nextRuns||'Next:')+' '+d.next_runs.map(ts=>fmtTime(ts)).join(', ')+'</div>'}fb.className='cron-feedback valid';fb.innerHTML=html}else{const msgs=d.errors.map(e=>'<div>'+escapeHtml(e.field)+': '+escapeHtml(e.message)+'</div>').join('');fb.className='cron-feedback invalid';fb.innerHTML='<span>&#10007; '+(tdict.cronInvalid||'Invalid')+'</span>'+msgs}}).catch(()=>{fb.className='cron-feedback';fb.innerHTML=''})},300)}
-function updateFilterOptions(){const tdict=i18n[lang];fetch(`${API_BASE}/cron/categories`).then(r=>r.json()).then(cats=>{const sel=byId('filterCategory');const cur=sel.value;sel.innerHTML='<option value="">'+(tdict.filterAll||'All Categories')+'</option>';(cats||[]).forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o)});sel.value=cur});fetch(`${API_BASE}/cron/tags`).then(r=>r.json()).then(tags=>{const sel=byId('filterTag');const cur=sel.value;sel.innerHTML='<option value="">'+(tdict.filterAllTags||'All Tags')+'</option>';(tags||[]).forEach(t=>{const o=document.createElement('option');o.value=t;o.textContent=t;sel.appendChild(o)});sel.value=cur});fetch(`${API_BASE}/cron/categories`).then(r=>r.json()).then(cats=>{const dl=byId('categoryList');dl.innerHTML='';(cats||[]).forEach(c=>{const o=document.createElement('option');o.value=c;dl.appendChild(o)})})}
-function init(){const modal=byId('createTaskModal');const openBtn=byId('openCreateModalBtn');const cancelBtn=byId('cancelCreateBtn');const createBtn=byId('createTaskBtn');const scheduleTypeSelect=byId('scheduleTypeSelect');const rowInterval=byId('rowInterval');const rowCron=byId('rowCron');const langSelect=byId('langSelect');lang='en';langSelect.value=lang;applyI18n();function openCreate(){clearForm();populateDependsOn(null);modal.classList.add('show')}function closeCreate(){modal.classList.remove('show');editingTaskId=null}function updateVisibility(){const t=scheduleTypeSelect.value;if(t==='cron'){rowInterval.classList.add('hidden');rowCron.classList.remove('hidden')}else{rowInterval.classList.remove('hidden');rowCron.classList.add('hidden')}}openBtn.addEventListener('click',openCreate);cancelBtn.addEventListener('click',closeCreate);createBtn.addEventListener('click',()=>{saveTask().then(ok=>{if(ok)closeCreate()})});byId('confirmCancelBtn').addEventListener('click',hideConfirm);byId('confirmOkBtn').addEventListener('click',()=>{if(confirmCallback)confirmCallback();hideConfirm()});byId('runAllBtn').addEventListener('click',runAllOnce);byId('addEnvBtn').addEventListener('click',addEnvRow);byId('cronInput').addEventListener('input',validateCronInput);byId('filterCategory').addEventListener('change',fetchTasks);byId('filterTag').addEventListener('change',fetchTasks);scheduleTypeSelect.addEventListener('change',updateVisibility);langSelect.addEventListener('change',()=>{lang=langSelect.value;applyI18n();renderTasks()});byId('themeToggle').addEventListener('click',toggleTheme);byId('templateSelect').addEventListener('change',applyTemplate);byId('settingsToggle').addEventListener('click',()=>{loadSettings();byId('tgTestResult').className='';byId('tgTestResult').textContent='';byId('settingsModal').classList.add('show')});byId('settingsCancelBtn').addEventListener('click',()=>{byId('settingsModal').classList.remove('show')});byId('settingsSaveBtn').addEventListener('click',saveSettings);byId('tgTestBtn').addEventListener('click',testTelegram);byId('tgTokenReveal').addEventListener('click',()=>{const inp=byId('tgBotToken');inp.type=inp.type==='password'?'text':'password'});initTheme();loadTemplates();updateVisibility();fetchTasks()}
-async function fetchTasks(){const catFilter=byId('filterCategory').value;const tagFilter=byId('filterTag').value;let url=`${API_BASE}/cron/tasks`;const params=[];if(catFilter)params.push('category='+encodeURIComponent(catFilter));if(tagFilter)params.push('tag='+encodeURIComponent(tagFilter));if(params.length)url+='?'+params.join('&');try{const res=await fetch(url);if(!res.ok)throw new Error('HTTP '+res.status);const list=await res.json();const normalize=t=>({id:t.id,name:t.name,command:t.command,type:t.type,status:t.status,executing:!!t.executing,nextRunAt:t.next_run_at||0,lastRunAt:t.last_run_at||0,lastResult:t.last_result||null,category:t.category||'',tags:t.tags||[],priority:t.priority||0,dependsOn:t.depends_on||[],allowParallel:t.allow_parallel||false,showLogs:false,logs:[]});const openLogs={};tasks.forEach(ot=>{if(ot.showLogs)openLogs[ot.id]={logs:ot.logs,logSearch:ot.logSearch,logsLoading:ot.logsLoading}});tasks=list.map(normalize);tasks.forEach(nt=>{if(openLogs[nt.id]){nt.showLogs=true;nt.logs=openLogs[nt.id].logs;nt.logSearch=openLogs[nt.id].logSearch;nt.logsLoading=openLogs[nt.id].logsLoading}});renderTasks();updateFilterOptions();if(!templates.length)loadTemplates();scheduleExecPoll()}catch(e){console.error('Failed to fetch tasks:',e);const tbody=byId('taskTableBody');tbody.innerHTML='<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--muted,#888)"><div style="margin-bottom:0.5rem">&#9203; Waiting for backend to start...</div><div style="font-size:0.85em;opacity:0.7">Auto-retrying every 5 seconds</div></td></tr>';setTimeout(fetchTasks,5000)}}
-async function saveTask(){const payload=buildSavePayload();if(!payload)return false;const url=editingTaskId?`${API_BASE}/cron/tasks/${editingTaskId}`:`${API_BASE}/cron/tasks`;const method=editingTaskId?'PUT':'POST';const res=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!res.ok)return false;await fetchTasks();return true}
-async function openEdit(id){try{const res=await fetch(`${API_BASE}/cron/tasks/${id}`);if(!res.ok)return;const task=await res.json();editingTaskId=id;populateForm(task);byId('createTaskModal').classList.add('show')}catch(e){console.error('Failed to load task:',e)}}
-function renderTasks(){const tdict=i18n[lang];const tbody=byId('taskTableBody');tbody.innerHTML='';tasks.forEach(t=>{const tr=document.createElement('tr');const dotClass=t.executing?'executing':t.status;const statusText=t.executing?(tdict.statusExecuting||'Executing...'):t.status==='running'?tdict.statusRunning:tdict.statusPaused;const statusDot=`<span class="dot ${dotClass}"></span>`;const lastBadge=t.lastResult?`<span class="result-badge"><span class="dot ${t.lastResult.success?'success':'fail'}"></span>${t.lastResult.success?tdict.wordSuccess:tdict.wordFail}</span>`:'<span class="muted">-</span>';tr.innerHTML=`
-      <td>${escapeHtml(t.name)}${t.category?'<span class="category-badge">'+escapeHtml(t.category)+'</span>':''}${(t.tags||[]).map(tag=>'<span class="tag-badge">'+escapeHtml(tag)+'</span>').join('')}${(t.dependsOn&&t.dependsOn.length)?'<span class="tag-badge" title="depends on '+t.dependsOn.length+' task(s)">\u21b3 '+t.dependsOn.length+'</span>':''}</td>
-      <td><code>${escapeHtml(t.command)}</code></td>
-      <td><span class="status">${statusDot}${statusText}</span></td>
-      <td>${fmtTime(t.nextRunAt)}</td>
-      <td>${lastBadge}</td>
+/* Cron UI — plain JavaScript, no build step.
+ *
+ * Sections: i18n · api · state · render · task form · history · settings ·
+ * import/export · init. All strings come from i18n.js via t(); all backend
+ * calls go through api(), which attaches the ZimaOS session token.
+ */
+'use strict';
+
+const API_BASE = '/cron';
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+/* ---------- i18n ---------- */
+
+const LANGS = window.CRON_I18N || {};
+const SHELL_LANG_MAP = { en: 'en', de: 'de', fr: 'fr', zh: 'zh' };
+let lang = 'en';
+
+// The ZimaOS shell keeps the UI language in localStorage.lang as "fr_FR",
+// "de_DE", … (measured on v1.7.1); this module lives on the same origin and
+// follows it unless the user picked a language here (cron_lang).
+function resolveLanguage() {
+  const own = safeGet('cron_lang');
+  if (own && LANGS[own]) return own;
+  const shell = (safeGet('lang') || navigator.language || 'en').slice(0, 2).toLowerCase();
+  return LANGS[SHELL_LANG_MAP[shell]] ? SHELL_LANG_MAP[shell] : 'en';
+}
+
+function t(key, params) {
+  let s = (LANGS[lang] && LANGS[lang][key]) || (LANGS.en && LANGS.en[key]) || key;
+  if (params) for (const [k, v] of Object.entries(params)) s = s.replace(`{${k}}`, v);
+  return s;
+}
+
+function applyI18n() {
+  document.documentElement.lang = lang;
+  document.title = t('app.title');
+  $$('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+  $$('[data-i18n-ph]').forEach((el) => { el.placeholder = t(el.dataset.i18nPh); });
+  $$('[data-i18n-title]').forEach((el) => { el.title = t(el.dataset.i18nTitle); });
+  $('#langSelect').value = lang;
+  fillStaticSelects();
+}
+
+function setLanguage(next) {
+  lang = LANGS[next] ? next : 'en';
+  safeSet('cron_lang', lang);
+  applyI18n();
+  render();
+}
+
+const dateFmt = () => new Intl.DateTimeFormat(lang === 'zh' ? 'zh-CN' : lang, { dateStyle: 'medium', timeStyle: 'short' });
+const fmtTime = (ms) => (ms ? dateFmt().format(new Date(ms)) : '–');
+
+function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function safeSet(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } }
+
+/* ---------- api ---------- */
+
+class ApiError extends Error {
+  constructor(status, code, message) { super(message); this.status = status; this.code = code; }
+}
+
+// The gateway forwards module calls without the session token, so it is
+// attached here from the shell's localStorage. 401 surfaces as a banner
+// telling the user to reload ZimaOS (the shell refreshes the token).
+async function api(path, opts = {}) {
+  const headers = { Accept: 'application/json', ...(opts.headers || {}) };
+  if (opts.body !== undefined && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  const token = safeGet('access_token');
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(API_BASE + path, { ...opts, headers, body: opts.body !== undefined && typeof opts.body !== 'string' ? JSON.stringify(opts.body) : opts.body });
+  if (res.status === 204) return null;
+  const isJson = (res.headers.get('content-type') || '').includes('application/json');
+  const data = isJson ? await res.json().catch(() => ({})) : await res.text();
+  if (!res.ok) throw new ApiError(res.status, (data && data.code) || 'http', (data && data.error) || `HTTP ${res.status}`);
+  return data;
+}
+
+function describeError(err) {
+  if (err instanceof ApiError && LANGS.en[`error.${err.code}`]) return t(`error.${err.code}`);
+  return t('error.generic', { msg: err.message || String(err) });
+}
+
+/* ---------- state ---------- */
+
+const state = {
+  tasks: [],
+  templates: [],
+  categories: [],
+  tags: [],
+  openLogs: new Map(), // id -> { entries, loading, search }
+  pollTimer: null,
+  editingId: null,
+};
+
+async function loadTasks() {
+  const params = new URLSearchParams();
+  if ($('#filterCategory').value) params.set('category', $('#filterCategory').value);
+  if ($('#filterTag').value) params.set('tag', $('#filterTag').value);
+  const q = params.toString();
+  try {
+    const [tasks, categories, tags] = await Promise.all([
+      api(`/tasks${q ? `?${q}` : ''}`), api('/categories'), api('/tags'),
+    ]);
+    state.tasks = tasks;
+    state.categories = categories;
+    state.tags = tags;
+    hideBanner();
+    render();
+    schedulePoll();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      showBanner(describeError(err), 'bad');
+    } else {
+      showBanner(t('error.offline'), 'warn');
+      setTimeout(loadTasks, 5000);
+    }
+  }
+}
+
+// Poll while something is executing so the pulse and the result update
+// without the user clicking; stop as soon as everything is idle.
+function schedulePoll() {
+  clearTimeout(state.pollTimer);
+  if (state.tasks.some((task) => task.executing)) state.pollTimer = setTimeout(loadTasks, 2000);
+}
+
+async function loadTemplates() {
+  try { state.templates = await api('/templates'); } catch { state.templates = []; }
+  fillTemplateSelect();
+}
+
+/* ---------- render ---------- */
+
+function render() {
+  renderStats();
+  renderFilters();
+  renderTable();
+}
+
+function renderStats() {
+  const total = state.tasks.length;
+  const running = state.tasks.filter((task) => task.status === 'running').length;
+  const last = Math.max(0, ...state.tasks.map((task) => task.last_run_at || 0));
+  $('#statTotal').textContent = total;
+  $('#statRunning').textContent = running;
+  $('#statPaused').textContent = total - running;
+  $('#statLastRun').textContent = last ? fmtTime(last) : t('stats.never');
+}
+
+function renderFilters() {
+  fillSelect($('#filterCategory'), state.categories, t('tasks.filterAllCategories'));
+  fillSelect($('#filterTag'), state.tags, t('tasks.filterAllTags'));
+  const dl = $('#categoryList');
+  dl.innerHTML = '';
+  state.categories.forEach((c) => { const o = document.createElement('option'); o.value = c; dl.appendChild(o); });
+}
+
+function fillSelect(sel, values, allLabel) {
+  const cur = sel.value;
+  sel.innerHTML = '';
+  sel.appendChild(new Option(allLabel, ''));
+  values.forEach((v) => sel.appendChild(new Option(v, v)));
+  sel.value = values.includes(cur) ? cur : '';
+}
+
+function scheduleLabel(task) {
+  if (task.type === 'cron') return `<code>${esc(task.cron_expr)}</code>`;
+  const m = task.interval_min;
+  if (m % 1440 === 0) return m === 1440 ? t('schedule.everyDay') : t('schedule.everyDays', { n: m / 1440 });
+  if (m % 60 === 0) return m === 60 ? t('schedule.everyHour') : t('schedule.everyHours', { n: m / 60 });
+  return t('schedule.everyMin', { n: m });
+}
+
+function statusPill(task) {
+  if (task.executing) return `<span class="pill accent"><span class="dot pulse"></span>${t('status.executing')}</span>`;
+  if (task.status === 'running') return `<span class="pill ok"><span class="dot"></span>${t('status.running')}</span>`;
+  return `<span class="pill warn"><span class="dot"></span>${t('status.paused')}</span>`;
+}
+
+function resultPill(result, task) {
+  if (!result) return '<span class="muted">–</span>';
+  const label = LANGS.en[`result.${result.code}`] ? t(`result.${result.code}`) : (result.success ? t('result.completed') : t('result.exit_error'));
+  const cls = result.success ? 'ok' : (result.code && result.code.startsWith('skipped') ? 'warn' : 'bad');
+  const retry = task && task.current_retry ? ` <span class="muted">${t('result.retry', { n: task.current_retry, max: task.retry_count })}</span>` : '';
+  return `<span class="pill ${cls}" title="${esc((result.message || '').slice(0, 300))}">${label}</span>${retry}`;
+}
+
+function renderTable() {
+  const body = $('#taskBody');
+  body.innerHTML = '';
+  if (!state.tasks.length) {
+    body.innerHTML = `<tr><td colspan="6" class="empty">${t('tasks.empty')}</td></tr>`;
+    return;
+  }
+  for (const task of state.tasks) {
+    const tr = document.createElement('tr');
+    tr.className = 'task-row';
+    tr.dataset.id = task.id;
+    const badges = [
+      task.category ? `<span class="tag cat">${esc(task.category)}</span>` : '',
+      ...(task.tags || []).map((tag) => `<span class="tag">${esc(tag)}</span>`),
+      task.depends_on && task.depends_on.length ? `<span class="tag" title="${t('tasks.dependsOn', { n: task.depends_on.length })}">↳ ${task.depends_on.length}</span>` : '',
+    ].join('');
+    const open = state.openLogs.has(task.id);
+    tr.innerHTML = `
+      <td class="name"><strong>${esc(task.name)}</strong><div>${badges}</div><code class="cmd" title="${esc(task.command)}">${esc(task.command)}</code></td>
+      <td class="nowrap">${scheduleLabel(task)}</td>
+      <td>${statusPill(task)}</td>
+      <td class="nowrap">${task.status === 'running' ? fmtTime(task.next_run_at) : '–'}</td>
+      <td>${resultPill(task.last_result, task)}</td>
       <td class="actions">
-        <button data-action="run" data-id="${t.id}">${tdict.btnRun}</button>
-        <button data-action="toggle" data-id="${t.id}">${t.status==='running'?tdict.btnPause:tdict.btnResume}</button>
-        <button data-action="logs" data-id="${t.id}">${t.showLogs?tdict.btnLogsHide:tdict.btnLogsShow}</button>
-        <button data-action="edit" data-id="${t.id}">${tdict.btnEdit}</button>
-        <button data-action="delete" data-id="${t.id}">${tdict.btnDelete}</button>
-      </td>`;tbody.appendChild(tr);const logsRow=document.createElement('tr');const logsTd=document.createElement('td');logsTd.colSpan=6;if(t.showLogs){const header=document.createElement('div');header.className='logs-header';header.innerHTML=`<div class="muted">${tdict.logsTitle}${escapeHtml(t.name)}</div><div class="list-actions"><input type="text" class="log-search" data-id="${t.id}" placeholder="${tdict.logSearch||'Search...'}" value="${t.logSearch||''}"><button data-action="export-csv" data-id="${t.id}">${tdict.exportCsv||'CSV'}</button><button data-action="export-json" data-id="${t.id}">${tdict.exportJson||'JSON'}</button><button data-action="clear-logs" data-id="${t.id}">${tdict.btnClearLogs}</button></div>`;const list=document.createElement('div');list.className='logs-list';if(t.logsLoading){const item=document.createElement('div');item.className='log-item';item.innerHTML='<div class="muted">Loading...</div>';list.appendChild(item)}else{const searchTerm=(t.logSearch||'').toLowerCase();(t.logs||[]).filter(l=>!searchTerm||l.message.toLowerCase().includes(searchTerm)).slice(0,100).forEach(l=>{const item=document.createElement('div');item.className='log-item';const statusClass=l.success?'success':'fail';item.innerHTML=`<div class="log-time">${fmtTime(l.time)}</div><div>${escapeHtml(l.message)}</div><div class="log-status ${statusClass}">${l.success?tdict.wordSuccess:tdict.wordFail}</div>`;list.appendChild(item)})}const chartHtml=renderExecChart(t.logs);const container=document.createElement('div');container.className='row-logs';container.appendChild(header);if(chartHtml){const chartDiv=document.createElement('div');chartDiv.innerHTML=chartHtml;container.appendChild(chartDiv)}container.appendChild(list);logsTd.appendChild(container)}logsRow.appendChild(logsTd);tbody.appendChild(logsRow)});tbody.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',onRowAction));tbody.querySelectorAll('.log-search').forEach(inp=>{inp.addEventListener('input',e=>{const tid=e.target.getAttribute('data-id');const task=tasks.find(t=>t.id===tid);if(task){task.logSearch=e.target.value;renderTasks();const el=byId('taskTableBody').querySelector(`.log-search[data-id="${tid}"]`);if(el){el.focus();el.setSelectionRange(el.value.length,el.value.length)}}})})}
-function onRowAction(e){const action=e.currentTarget.getAttribute('data-action');const id=e.currentTarget.getAttribute('data-id');const task=tasks.find(t=>t.id===id);if(!task)return;if(action==='run')fetch(`${API_BASE}/cron/tasks/${id}/run`,{method:'POST'}).then(fetchTasks);if(action==='toggle')fetch(`${API_BASE}/cron/tasks/${id}/toggle`,{method:'POST'}).then(fetchTasks);if(action==='logs'){task.showLogs=!task.showLogs;if(task.showLogs){task.logsLoading=true;renderTasks();fetch(`${API_BASE}/cron/tasks/${id}/logs`).then(r=>r.json()).then(d=>{task.logs=d;task.logsLoading=false;renderTasks()}).catch(()=>{task.logsLoading=false;renderTasks()})}else{renderTasks()}}if(action==='clear-logs'){fetch(`${API_BASE}/cron/tasks/${id}/logs/clear`,{method:'POST'}).then(()=>{task.logs=[];renderTasks()})}if(action==='export-csv'){window.open(`${API_BASE}/cron/tasks/${id}/logs?format=csv`)}if(action==='export-json'){window.open(`${API_BASE}/cron/tasks/${id}/logs?format=json`)}if(action==='edit')openEdit(id);if(action==='delete'){const msg=(i18n[lang].deleteConfirmMsg||'Delete "{name}"?').replace('{name}',task.name);showConfirm(msg,()=>fetch(`${API_BASE}/cron/tasks/${id}`,{method:'DELETE'}).then(fetchTasks))}}
-function runAllOnce(){const running=tasks.filter(t=>t.status==='running');Promise.all(running.map(t=>fetch(`${API_BASE}/cron/tasks/${t.id}/run`,{method:'POST'}))).then(fetchTasks)}
-let execPollTimer=null;function scheduleExecPoll(){if(execPollTimer){clearTimeout(execPollTimer);execPollTimer=null}if(tasks.some(t=>t.executing)){execPollTimer=setTimeout(fetchTasks,2000)}}
-document.addEventListener('DOMContentLoaded',init)
+        <button class="sm" data-act="run">${t('action.run')}</button>
+        <button class="sm" data-act="edit">${t('action.edit')}</button>
+        <button class="sm" data-act="toggle">${task.status === 'running' ? t('action.pause') : t('action.resume')}</button>
+        <button class="sm" data-act="logs">${open ? t('action.hideLogs') : t('action.logs')}</button>
+        <button class="sm ghost" data-act="delete">${t('action.delete')}</button>
+      </td>`;
+    body.appendChild(tr);
+    if (open) body.appendChild(renderLogsRow(task));
+  }
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ---------- task actions ---------- */
+
+async function onTableClick(ev) {
+  const btn = ev.target.closest('button[data-act]');
+  if (!btn) return;
+  const id = btn.closest('tr').dataset.id;
+  const task = state.tasks.find((x) => x.id === id);
+  if (!task) return;
+  try {
+    switch (btn.dataset.act) {
+      case 'run': await api(`/tasks/${id}/run`, { method: 'POST' }); await loadTasks(); break;
+      case 'toggle': await api(`/tasks/${id}/toggle`, { method: 'POST' }); await loadTasks(); break;
+      case 'edit': openTaskForm(task); break;
+      case 'logs': toggleLogs(task); break;
+      case 'delete':
+        confirmDialog(t('confirm.deleteTitle'), t('confirm.deleteText', { name: task.name }), t('confirm.delete'), async () => {
+          await api(`/tasks/${id}`, { method: 'DELETE' });
+          state.openLogs.delete(id);
+          await loadTasks();
+        });
+        break;
+      default:
+    }
+  } catch (err) { showBanner(describeError(err), 'bad'); }
+}
+
+async function runAll() {
+  const ids = state.tasks.filter((task) => task.status === 'running').map((task) => task.id);
+  if (!ids.length) return;
+  try { await api('/tasks/bulk/run', { method: 'POST', body: { ids } }); await loadTasks(); } catch (err) { showBanner(describeError(err), 'bad'); }
+}
+
+/* ---------- history ---------- */
+
+function toggleLogs(task) {
+  if (state.openLogs.has(task.id)) { state.openLogs.delete(task.id); render(); return; }
+  const entry = { entries: [], loading: true, search: '' };
+  state.openLogs.set(task.id, entry);
+  render();
+  api(`/tasks/${task.id}/logs`).then((logs) => { entry.entries = logs; entry.loading = false; render(); })
+    .catch((err) => { entry.loading = false; showBanner(describeError(err), 'bad'); render(); });
+}
+
+function renderLogsRow(task) {
+  const view = state.openLogs.get(task.id);
+  const tr = document.createElement('tr');
+  tr.className = 'logs-row';
+  tr.dataset.id = task.id;
+  const td = document.createElement('td');
+  td.colSpan = 6;
+  const term = view.search.toLowerCase();
+  const shown = view.entries.filter((l) => !term || (l.message || '').toLowerCase().includes(term)).slice(0, 200);
+  const spark = view.entries.length > 1
+    ? `<div class="spark">${view.entries.slice(0, 40).reverse().map((l) => `<i class="${l.success ? '' : 'bad'}" title="${fmtTime(l.time)}"></i>`).join('')}</div>` : '';
+  let list;
+  if (view.loading) list = `<div class="muted">${t('logs.loading')}</div>`;
+  else if (!shown.length) list = `<div class="muted">${t('logs.empty')}</div>`;
+  else {
+    list = `<div class="logs-list">${shown.map((l) => `
+      <div class="log-item">
+        <span class="time">${fmtTime(l.time)}</span>
+        <pre>${esc(l.message) || `<span class="muted">${t('logs.noOutput')}</span>`}</pre>
+        <span class="dur">${t('logs.duration', { ms: l.duration_ms || 0 })}</span>
+        ${resultPill({ success: l.success, code: l.code, message: '' })}
+      </div>`).join('')}</div>`;
+  }
+  td.innerHTML = `
+    <div class="logs-head">
+      <span class="title">${t('logs.title')} · ${esc(task.name)}</span>
+      <input type="text" class="compact log-search" placeholder="${t('logs.search')}" value="${esc(view.search)}">
+      <button class="sm" data-log="csv">${t('logs.exportCsv')}</button>
+      <button class="sm" data-log="json">${t('logs.exportJson')}</button>
+      <button class="sm ghost" data-log="clear">${t('logs.clear')}</button>
+    </div>${spark}${list}`;
+  tr.appendChild(td);
+  $('.log-search', td).addEventListener('input', (ev) => {
+    view.search = ev.target.value;
+    const pos = ev.target.selectionStart;
+    render();
+    const again = $(`tr.logs-row[data-id="${task.id}"] .log-search`);
+    if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+  });
+  $$('button[data-log]', td).forEach((b) => b.addEventListener('click', () => onLogAction(task, b.dataset.log)));
+  return tr;
+}
+
+async function onLogAction(task, action) {
+  if (action === 'csv' || action === 'json') {
+    // window.open cannot carry the bearer header; fetch and hand over a blob.
+    const res = await fetch(`${API_BASE}/tasks/${task.id}/logs${action === 'csv' ? '?format=csv' : ''}`, { headers: { Authorization: `Bearer ${safeGet('access_token') || ''}` } });
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${task.name.replace(/[^\w.-]+/g, '_')}_history.${action}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    return;
+  }
+  confirmDialog(t('logs.clear'), t('confirm.clearLogsText', { name: task.name }), t('confirm.clear'), async () => {
+    await api(`/tasks/${task.id}/logs/clear`, { method: 'POST' });
+    const view = state.openLogs.get(task.id);
+    if (view) view.entries = [];
+    render();
+  });
+}
+
+/* ---------- task form ---------- */
+
+const form = {
+  name: () => $('#nameInput'), command: () => $('#commandInput'), type: () => $('#typeSelect'),
+  interval: () => $('#intervalInput'), cron: () => $('#cronInput'), category: () => $('#categoryInput'),
+  priority: () => $('#priorityInput'), tags: () => $('#tagsInput'), timeout: () => $('#timeoutInput'),
+  maxLogs: () => $('#maxLogsInput'), retryCount: () => $('#retryCountInput'), retryDelay: () => $('#retryDelayInput'),
+  depends: () => $('#dependsSelect'), allowParallel: () => $('#allowParallelCheck'),
+  webhookUrl: () => $('#webhookUrlInput'), webhookFormat: () => $('#webhookFormatSelect'),
+  webhookOnSuccess: () => $('#webhookOnSuccess'), webhookOnFailure: () => $('#webhookOnFailure'),
+  emailTo: () => $('#emailToInput'), smtpHost: () => $('#smtpHostInput'), smtpUser: () => $('#smtpUserInput'),
+  smtpPass: () => $('#smtpPassInput'), smtpPort: () => $('#smtpPortInput'),
+  emailOnSuccess: () => $('#emailOnSuccess'), emailOnFailure: () => $('#emailOnFailure'),
+};
+
+function fillStaticSelects() {
+  const wf = form.webhookFormat();
+  const cur = wf.value;
+  wf.innerHTML = '';
+  ['generic', 'n8n', 'discord', 'slack', 'home_assistant', 'uptime_kuma'].forEach((f) => wf.appendChild(new Option(t(`webhookFormat.${f}`), f)));
+  wf.value = cur || 'generic';
+  fillTemplateSelect();
+}
+
+function fillTemplateSelect() {
+  const sel = $('#templateSelect');
+  sel.innerHTML = '';
+  sel.appendChild(new Option(t('form.blank'), ''));
+  state.templates.forEach((tpl) => {
+    const name = LANGS.en[`tpl.${tpl.id}.name`] ? t(`tpl.${tpl.id}.name`) : tpl.name;
+    const desc = LANGS.en[`tpl.${tpl.id}.desc`] ? t(`tpl.${tpl.id}.desc`) : tpl.description;
+    sel.appendChild(new Option(`${name} — ${desc}`, tpl.id));
+  });
+}
+
+function resetForm() {
+  $('#formNotice').hidden = true;
+  Object.values(form).forEach((get) => {
+    const el = get();
+    if (el.type === 'checkbox') el.checked = false;
+    else if (el.multiple) Array.from(el.options).forEach((o) => { o.selected = false; });
+    else el.value = '';
+  });
+  form.type().value = 'interval';
+  form.webhookFormat().value = 'generic';
+  form.webhookOnFailure().checked = true;
+  form.emailOnFailure().checked = true;
+  $('#envRows').innerHTML = '';
+  $('#templateSelect').value = '';
+  $('#cronFeedback').textContent = '';
+  updateScheduleFields();
+}
+
+function openTaskForm(task) {
+  resetForm();
+  state.editingId = task ? task.id : null;
+  $('#taskModalTitle').textContent = task ? t('form.editTitle') : t('form.createTitle');
+  $('#taskSaveBtn').textContent = task ? t('form.save') : t('form.create');
+  $('#templateField').hidden = !!task;
+  const dep = form.depends();
+  dep.innerHTML = '';
+  state.tasks.filter((x) => !task || x.id !== task.id).forEach((x) => dep.appendChild(new Option(x.name, x.id)));
+  if (task) fillForm(task);
+  $('#taskModal').hidden = false;
+  form.name().focus();
+}
+
+function fillForm(task) {
+  form.name().value = task.name;
+  form.command().value = task.command;
+  form.type().value = task.type;
+  if (task.type === 'interval') form.interval().value = task.interval_min; else { form.cron().value = task.cron_expr; validateCron(); }
+  form.category().value = task.category || '';
+  form.priority().value = task.priority || '';
+  form.tags().value = (task.tags || []).join(', ');
+  form.timeout().value = task.timeout_sec || '';
+  form.maxLogs().value = task.max_log_entries || '';
+  form.retryCount().value = task.retry_count || '';
+  form.retryDelay().value = task.retry_delay_sec || '';
+  form.allowParallel().checked = !!task.allow_parallel;
+  Array.from(form.depends().options).forEach((o) => { o.selected = (task.depends_on || []).includes(o.value); });
+  Object.entries(task.env || {}).forEach(([k, v]) => addEnvRow(k, v));
+  for (const n of task.notifications || []) {
+    if (n.type === 'webhook') {
+      form.webhookUrl().value = n.target; form.webhookFormat().value = n.webhook_format || 'generic';
+      form.webhookOnSuccess().checked = !!n.on_success; form.webhookOnFailure().checked = !!n.on_failure;
+    } else if (n.type === 'email') {
+      form.emailTo().value = n.target; form.smtpHost().value = n.smtp_host || ''; form.smtpPort().value = n.smtp_port || '';
+      form.smtpUser().value = n.smtp_user || ''; form.smtpPass().value = n.smtp_pass || '';
+      form.emailOnSuccess().checked = !!n.on_success; form.emailOnFailure().checked = !!n.on_failure;
+    }
+  }
+  updateScheduleFields();
+}
+
+function updateScheduleFields() {
+  const cron = form.type().value === 'cron';
+  $('#intervalField').hidden = cron;
+  $('#cronField').hidden = !cron;
+}
+
+function addEnvRow(key = '', value = '') {
+  const row = document.createElement('div');
+  row.className = 'env-row';
+  row.innerHTML = `<input type="text" class="env-key" placeholder="${t('form.envKey')}"><input type="text" class="env-val" placeholder="${t('form.envValue')}"><button type="button" class="sm ghost">&times;</button>`;
+  $('.env-key', row).value = key;
+  $('.env-val', row).value = value;
+  $('button', row).addEventListener('click', () => row.remove());
+  $('#envRows').appendChild(row);
+}
+
+function readForm() {
+  const num = (el) => { const v = parseInt(el.value, 10); return Number.isFinite(v) ? v : 0; };
+  const req = {
+    name: form.name().value.trim(),
+    command: form.command().value.trim(),
+    type: form.type().value,
+    interval_min: num(form.interval()),
+    cron_expr: form.cron().value.trim(),
+    timeout_sec: num(form.timeout()),
+    retry_count: num(form.retryCount()),
+    retry_delay_sec: num(form.retryDelay()),
+    max_log_entries: num(form.maxLogs()),
+    category: form.category().value.trim(),
+    priority: num(form.priority()),
+    tags: form.tags().value.split(',').map((s) => s.trim()).filter(Boolean),
+    depends_on: Array.from(form.depends().selectedOptions).map((o) => o.value),
+    allow_parallel: form.allowParallel().checked,
+    notifications: [],
+  };
+  const env = {};
+  $$('#envRows .env-row').forEach((row) => { const k = $('.env-key', row).value.trim(); if (k) env[k] = $('.env-val', row).value; });
+  if (Object.keys(env).length) req.env = env;
+  if (form.webhookUrl().value.trim()) {
+    req.notifications.push({ enabled: true, type: 'webhook', target: form.webhookUrl().value.trim(), webhook_format: form.webhookFormat().value,
+      on_success: form.webhookOnSuccess().checked, on_failure: form.webhookOnFailure().checked });
+  }
+  if (form.emailTo().value.trim() && form.smtpHost().value.trim()) {
+    req.notifications.push({ enabled: true, type: 'email', target: form.emailTo().value.trim(), smtp_host: form.smtpHost().value.trim(),
+      smtp_port: num(form.smtpPort()) || 587, smtp_user: form.smtpUser().value.trim(), smtp_pass: form.smtpPass().value,
+      on_success: form.emailOnSuccess().checked, on_failure: form.emailOnFailure().checked });
+  }
+  return req;
+}
+
+async function saveTask() {
+  const notice = $('#formNotice');
+  notice.hidden = true;
+  const req = readForm();
+  try {
+    if (state.editingId) await api(`/tasks/${state.editingId}`, { method: 'PUT', body: req });
+    else await api('/tasks', { method: 'POST', body: req });
+    $('#taskModal').hidden = true;
+    await loadTasks();
+  } catch (err) {
+    notice.textContent = describeError(err);
+    notice.hidden = false;
+  }
+}
+
+function applyTemplate() {
+  const tpl = state.templates.find((x) => x.id === $('#templateSelect').value);
+  if (!tpl) return;
+  form.name().value = LANGS.en[`tpl.${tpl.id}.name`] ? t(`tpl.${tpl.id}.name`) : tpl.name;
+  form.command().value = tpl.command;
+  form.category().value = tpl.category || '';
+  form.timeout().value = tpl.timeout_sec || '';
+  form.type().value = tpl.type;
+  updateScheduleFields();
+  if (tpl.type === 'interval') form.interval().value = tpl.interval_min || '';
+  else { form.cron().value = tpl.cron_expr || ''; validateCron(); }
+}
+
+let cronTimer = null;
+function validateCron() {
+  const expr = form.cron().value.trim();
+  const fb = $('#cronFeedback');
+  clearTimeout(cronTimer);
+  if (!expr) { fb.textContent = ''; fb.className = 'cron-feedback'; return; }
+  cronTimer = setTimeout(async () => {
+    try {
+      const d = await api('/cron/validate', { method: 'POST', body: { expr } });
+      if (d.valid) {
+        fb.className = 'cron-feedback ok';
+        fb.innerHTML = `✓ ${t('form.cronValid')}<div class="next">${t('form.nextRuns')} ${d.next_runs.map(fmtTime).join(' · ')}</div>`;
+      } else {
+        fb.className = 'cron-feedback bad';
+        fb.innerHTML = `✗ ${t('form.cronInvalid')}${d.errors.map((e) => `<div>${esc(e.field)}: ${esc(e.message)}</div>`).join('')}`;
+      }
+    } catch { fb.textContent = ''; }
+  }, 250);
+}
+
+/* ---------- dialogs ---------- */
+
+function confirmDialog(title, text, okLabel, onOk) {
+  $('#confirmTitle').textContent = title;
+  $('#confirmText').textContent = text;
+  const ok = $('#confirmOkBtn');
+  ok.textContent = okLabel;
+  ok.onclick = async () => {
+    try { await onOk(); } catch (err) { showBanner(describeError(err), 'bad'); }
+    $('#confirmModal').hidden = true;
+  };
+  $('#confirmModal').hidden = false;
+}
+
+function showBanner(text, kind) {
+  const b = $('#banner');
+  b.className = `notice banner ${kind}`;
+  b.textContent = text;
+  b.hidden = false;
+}
+function hideBanner() { $('#banner').hidden = true; }
+
+/* ---------- settings ---------- */
+
+async function openSettings() {
+  $('#settingsNotice').hidden = true;
+  try {
+    const s = await api('/settings');
+    $('#tgTokenInput').value = s.telegram_bot_token || '';
+    $('#tgChatInput').value = s.telegram_chat_id || '';
+    $('#tgOnSuccess').checked = !!s.telegram_on_success;
+    $('#tgOnFailure').checked = s.telegram_on_failure !== false;
+    $('#settingsModal').hidden = false;
+  } catch (err) { showBanner(describeError(err), 'bad'); }
+}
+
+function settingsBody() {
+  return {
+    telegram_bot_token: $('#tgTokenInput').value.trim(),
+    telegram_chat_id: $('#tgChatInput').value.trim(),
+    telegram_on_success: $('#tgOnSuccess').checked,
+    telegram_on_failure: $('#tgOnFailure').checked,
+  };
+}
+
+async function saveSettings() {
+  const n = $('#settingsNotice');
+  try {
+    await api('/settings', { method: 'PUT', body: settingsBody() });
+    n.className = 'notice ok'; n.textContent = t('settings.saved'); n.hidden = false;
+    setTimeout(() => { $('#settingsModal').hidden = true; }, 600);
+  } catch (err) { n.className = 'notice bad'; n.textContent = describeError(err); n.hidden = false; }
+}
+
+async function testTelegram() {
+  const n = $('#settingsNotice');
+  n.className = 'notice'; n.textContent = t('settings.testSending'); n.hidden = false;
+  try {
+    const body = settingsBody();
+    const d = await api('/settings/test-telegram', { method: 'POST', body: { bot_token: body.telegram_bot_token, chat_id: body.telegram_chat_id } });
+    n.className = d.success ? 'notice ok' : 'notice bad';
+    n.textContent = d.success ? t('settings.testOk') : `${t('settings.testFail')}: ${d.error || ''}`;
+  } catch (err) { n.className = 'notice bad'; n.textContent = describeError(err); }
+}
+
+/* ---------- import / export ---------- */
+
+async function exportTasks() {
+  try {
+    const data = await api('/export');
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `cron_export_${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) { showBanner(describeError(err), 'bad'); }
+}
+
+async function importTasks(file) {
+  const body = $('#importBody');
+  try {
+    const text = await file.text();
+    JSON.parse(text); // fail early with a readable message
+    const r = await api('/import', { method: 'POST', body: text });
+    let html = `<p>${t('import.result', { n: r.imported })}</p>`;
+    if (r.skipped && r.skipped.length) {
+      html += `<p class="muted" style="margin-top:8px">${t('import.skipped', { n: r.skipped.length })}</p><ul style="margin:6px 0 0 18px">`;
+      html += r.skipped.map((s) => `<li><strong>${esc(s.name || '?')}</strong> — ${LANGS.en[`error.${s.code}`] ? t(`error.${s.code}`) : esc(s.reason)}</li>`).join('');
+      html += '</ul>';
+    }
+    body.innerHTML = html;
+    $('#importModal').hidden = false;
+    await loadTasks();
+  } catch (err) {
+    body.innerHTML = `<p class="notice bad">${err instanceof SyntaxError ? t('error.bad_json') : describeError(err)}</p>`;
+    $('#importModal').hidden = false;
+  }
+}
+
+/* ---------- theme ---------- */
+
+function initTheme() {
+  const saved = safeGet('cron_theme');
+  if (saved === 'dark') document.documentElement.dataset.theme = 'dark';
+  updateThemeIcon();
+}
+function toggleTheme() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  if (dark) delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = 'dark';
+  safeSet('cron_theme', dark ? 'light' : 'dark');
+  updateThemeIcon();
+}
+function updateThemeIcon() { $('#themeToggle').innerHTML = document.documentElement.dataset.theme === 'dark' ? '&#9728;' : '&#9790;'; }
+
+/* ---------- init ---------- */
+
+function init() {
+  lang = resolveLanguage();
+  initTheme();
+  applyI18n();
+
+  $('#langSelect').addEventListener('change', (ev) => setLanguage(ev.target.value));
+  $('#themeToggle').addEventListener('click', toggleTheme);
+  $('#settingsBtn').addEventListener('click', openSettings);
+  $('#settingsCancelBtn').addEventListener('click', () => { $('#settingsModal').hidden = true; });
+  $('#settingsSaveBtn').addEventListener('click', saveSettings);
+  $('#tgTestBtn').addEventListener('click', testTelegram);
+
+  $('#newTaskBtn').addEventListener('click', () => openTaskForm(null));
+  $('#taskCancelBtn').addEventListener('click', () => { $('#taskModal').hidden = true; });
+  $('#taskSaveBtn').addEventListener('click', saveTask);
+  $('#templateSelect').addEventListener('change', applyTemplate);
+  $('#typeSelect').addEventListener('change', updateScheduleFields);
+  $('#cronInput').addEventListener('input', validateCron);
+  $('#addEnvBtn').addEventListener('click', () => addEnvRow());
+  $('#runAllBtn').addEventListener('click', runAll);
+  $('#taskBody').addEventListener('click', onTableClick);
+  $('#filterCategory').addEventListener('change', loadTasks);
+  $('#filterTag').addEventListener('change', loadTasks);
+
+  $('#confirmCancelBtn').addEventListener('click', () => { $('#confirmModal').hidden = true; });
+  $('#exportBtn').addEventListener('click', exportTasks);
+  $('#importBtn').addEventListener('click', () => $('#importFile').click());
+  $('#importFile').addEventListener('change', (ev) => { if (ev.target.files[0]) importTasks(ev.target.files[0]); ev.target.value = ''; });
+  $('#importCloseBtn').addEventListener('click', () => { $('#importModal').hidden = true; });
+
+  $$('.modal-overlay').forEach((ov) => ov.addEventListener('click', (ev) => { if (ev.target === ov) ov.hidden = true; }));
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') $$('.modal-overlay').forEach((ov) => { ov.hidden = true; }); });
+
+  loadTemplates();
+  loadTasks();
+}
+
+document.addEventListener('DOMContentLoaded', init);
