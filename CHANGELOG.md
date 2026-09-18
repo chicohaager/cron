@@ -19,6 +19,12 @@
 - `cron.service` waited on `casaos-*` units that do not exist on
   ZimaOS 1.7 (#1, by @ApertureDevelopment).
 - The Docker cleanup template pruned volumes — the data of every stopped app.
+- An interval above 2^53 minutes (what a mistyped number field can send)
+  overflowed to a negative duration and panicked the scheduler with the
+  registry lock held; every later request hung until a restart. Intervals,
+  timeouts and retry delays are now capped at one year.
+- The release asset `cron.raw.sha256` named `cron-amd64.raw`, so
+  `sha256sum -c` could not verify the download.
 
 ### Added
 - Session authentication: the API requires a ZimaOS access token; CORS

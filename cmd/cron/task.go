@@ -179,6 +179,13 @@ type taskRequest struct {
 	MaxLogEntries int               `json:"max_log_entries,omitempty"`
 }
 
+// Longest schedule and wait the API accepts: one year. Beyond that the
+// Duration arithmetic in the scheduler overflows.
+const (
+	maxIntervalMin = 366 * 24 * 60
+	maxSeconds     = 366 * 24 * 60 * 60
+)
+
 // reqErr is a validation failure with a stable code for the UI.
 func reqErr(code, format string, a ...interface{}) error {
 	return httpx.BadRequest(code, format, a...)
@@ -199,8 +206,11 @@ func validateRequestLocked(req *taskRequest, selfID string) error {
 	}
 	switch req.Type {
 	case typeInterval:
-		if req.IntervalMin < 1 {
-			return reqErr("interval_invalid", "interval_min must be >= 1")
+		// upper bound: time.Duration(n)*time.Minute wraps for n >= 2^53
+		// (what parseInt makes of a fat-fingered number field); a negative
+		// interval would panic time.NewTicker with mu held.
+		if req.IntervalMin < 1 || req.IntervalMin > maxIntervalMin {
+			return reqErr("interval_invalid", "interval_min must be between 1 and %d (one year)", maxIntervalMin)
 		}
 	case typeCron:
 		if errs, ok := schedule.Validate(req.CronExpr); !ok {
@@ -217,6 +227,9 @@ func validateRequestLocked(req *taskRequest, selfID string) error {
 	}
 	if req.TimeoutSec < 0 || req.RetryCount < 0 || req.RetryDelaySec < 0 || req.MaxLogEntries < 0 {
 		return reqErr("value_negative", "timeout, retry and log settings must not be negative")
+	}
+	if req.TimeoutSec > maxSeconds || req.RetryDelaySec > maxSeconds {
+		return reqErr("value_too_large", "timeout and retry delay must not exceed %d seconds (one year)", maxSeconds)
 	}
 	if err := validateNotifications(req.Notifications); err != nil {
 		return err

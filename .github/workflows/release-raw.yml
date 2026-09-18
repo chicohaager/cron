@@ -53,7 +53,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Keep cron.raw — the asset name v0.2.0 shipped and zpkg installed (asset resolution of zpkg is not documented)
-        run: cp dist/cron-amd64.raw dist/cron.raw && cp dist/cron-amd64.raw.sha256 dist/cron.raw.sha256
+        run: cp dist/cron-amd64.raw dist/cron.raw && (cd dist && sha256sum cron.raw > cron.raw.sha256)
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

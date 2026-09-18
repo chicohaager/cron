@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chicohaager/lintux-modkit/auth"
 	"github.com/chicohaager/lintux-modkit/httpx"
@@ -165,6 +166,10 @@ func TestValidationErrorsCarryCodes(t *testing.T) {
 		{taskRequest{Name: "x", Type: "interval", IntervalMin: 1}, "command_required"},
 		{taskRequest{Name: "x", Command: "true", Type: "weekly"}, "type_invalid"},
 		{taskRequest{Name: "x", Command: "true", Type: "interval"}, "interval_invalid"},
+		// 2^53-1 minutes wraps to -1m0s and used to panic NewTicker with mu held
+		{taskRequest{Name: "x", Command: "true", Type: "interval", IntervalMin: 9007199254740991}, "interval_invalid"},
+		{taskRequest{Name: "x", Command: "true", Type: "interval", IntervalMin: maxIntervalMin + 1}, "interval_invalid"},
+		{taskRequest{Name: "x", Command: "true", Type: "interval", IntervalMin: 1, TimeoutSec: maxSeconds + 1}, "value_too_large"},
 		{taskRequest{Name: "x", Command: "true", Type: "cron", CronExpr: "* * *"}, "cron_invalid"},
 		{taskRequest{Name: "x", Command: "true", Type: "cron", CronExpr: "0 0 30 feb *"}, "cron_never_fires"},
 		{taskRequest{Name: "x", Command: "true", Type: "interval", IntervalMin: 1, Priority: 11}, "priority_invalid"},
@@ -258,5 +263,35 @@ func TestHealthIsOpenAndTasksListIsSortedByPriority(t *testing.T) {
 	resp, raw := call(t, srv, http.MethodGet, "/cron/health", nil)
 	if resp.StatusCode != 200 || !strings.Contains(string(raw), `"tasks_total":3`) {
 		t.Fatalf("health: %d %s", resp.StatusCode, raw)
+	}
+}
+
+// Before the cap, this request panicked time.NewTicker between mu.Lock and
+// mu.Unlock, and every later request hung on the mutex.
+func TestOverflowingIntervalDoesNotWedgeTheServer(t *testing.T) {
+	srv := newTestServer(t)
+	resp, _ := call(t, srv, http.MethodPost, "/cron/tasks",
+		taskRequest{Name: "x", Command: "true", Type: "interval", IntervalMin: 9007199254740991})
+	if resp.StatusCode != 400 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	done := make(chan int, 1)
+	go func() {
+		resp, _ := call(t, srv, http.MethodGet, "/cron/tasks", nil)
+		done <- resp.StatusCode
+	}()
+	select {
+	case code := <-done:
+		if code != 200 {
+			t.Fatalf("list after overflow: %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server wedged: list request did not return")
+	}
+	mu.RLock()
+	n := len(tasks)
+	mu.RUnlock()
+	if n != 0 {
+		t.Fatalf("rejected task was inserted: %d tasks", n)
 	}
 }
