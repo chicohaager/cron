@@ -14,10 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chicohaager/cron/internal/auth"
 	conf "github.com/chicohaager/cron/internal/config"
 	svc "github.com/chicohaager/cron/internal/service"
 	"github.com/chicohaager/cron/internal/storage"
+	"github.com/chicohaager/lintux-modkit/auth"
+	"github.com/chicohaager/lintux-modkit/httpx"
+	"github.com/chicohaager/lintux-modkit/notify"
+	"github.com/chicohaager/lintux-modkit/watchdog"
 )
 
 const (
@@ -40,7 +43,10 @@ var (
 
 func main() {
 	log.Printf("[cron] starting v%s", version)
-	installWatchdog()
+	notify.AppName = "cron"
+	if err := watchdog.Install(watchdog.Options{Service: "cron", Binary: "/usr/bin/cron"}); err != nil {
+		log.Printf("[cron] %v", err)
+	}
 
 	store = openStorage()
 	if err := loadPersistedTasks(); err != nil {
@@ -64,7 +70,7 @@ func main() {
 
 	verifier := newVerifier(runtimePath)
 	srv := &http.Server{
-		Handler:           withStatic(withCSRF(newMux(verifier.Middleware))),
+		Handler:           withStatic(httpx.CSRF(newMux(verifier.Middleware))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go shutdownOnSignal(srv)

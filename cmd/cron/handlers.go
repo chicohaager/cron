@@ -4,16 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	cronpkg "github.com/chicohaager/cron/internal/cron"
-	"github.com/chicohaager/cron/internal/notify"
 	"github.com/chicohaager/cron/internal/storage"
+	"github.com/chicohaager/lintux-modkit/httpx"
+	"github.com/chicohaager/lintux-modkit/notify"
+	"github.com/chicohaager/lintux-modkit/schedule"
 )
 
 // routePrefix is the path the gateway forwards to us; it is kept on the
@@ -24,11 +24,12 @@ const routePrefix = "/cron"
 // token; everything else goes through the verifier when one is configured.
 func newMux(verify func(http.Handler) http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
+	logged := httpx.Logging("cron", maxRequestBody)
 	open := func(pattern string, h http.HandlerFunc) {
-		mux.Handle(routePrefix+pattern, withLogging(h))
+		mux.Handle(routePrefix+pattern, logged(h))
 	}
 	guarded := func(pattern string, h http.HandlerFunc) {
-		mux.Handle(routePrefix+pattern, withLogging(verify(h)))
+		mux.Handle(routePrefix+pattern, logged(verify(h)))
 	}
 	open("/health", healthHandler)
 	guarded("/tasks", tasksHandler)
@@ -47,9 +48,8 @@ func newMux(verify func(http.Handler) http.Handler) *http.ServeMux {
 	return mux
 }
 
-// staticDir is where the sysext ships the UI. On ZimaOS the gateway serves
-// it directly under /modules/cron/; the daemon serves it too so the UI works
-// when reached at its loopback port without a gateway (development, probes).
+// staticDir is where the sysext ships the UI; CRON_STATIC_DIR overrides it
+// for development.
 const staticDir = "/usr/share/casaos/www/modules/cron"
 
 func withStatic(next http.Handler) http.Handler {
@@ -57,103 +57,20 @@ func withStatic(next http.Handler) http.Handler {
 	if env := os.Getenv("CRON_STATIC_DIR"); env != "" {
 		dir = env
 	}
-	files := http.StripPrefix("/modules/cron/", http.FileServer(http.Dir(dir)))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/" || r.URL.Path == "/modules/cron":
-			http.Redirect(w, r, "/modules/cron/", http.StatusFound)
-		case strings.HasPrefix(r.URL.Path, "/modules/cron/"):
-			if strings.Contains(r.URL.Path, "..") {
-				http.NotFound(w, r)
-				return
-			}
-			files.ServeHTTP(w, r)
-		default:
-			next.ServeHTTP(w, r)
-		}
-	})
+	return httpx.Static("/modules/cron/", dir, next)
 }
 
-// --- response helpers ---
+// --- response helpers (thin names over httpx so handlers stay short) ---
 
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("[cron] write response: %v", err)
-	}
-}
+var (
+	writeJSON        = httpx.WriteJSON
+	writeError       = httpx.WriteError
+	methodNotAllowed = httpx.MethodNotAllowed
+	notFound         = httpx.NotFound
+	decodeBody       = httpx.Decode
+)
 
-// writeError answers with {"error": msg, "code": code}. The code is what
-// the UI translates; the message is for logs and API clients.
-func writeError(w http.ResponseWriter, status int, code, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg, "code": code})
-}
-
-// writeRequestError maps a validation failure to 400 with its code, and
-// anything else to 500.
-func writeRequestError(w http.ResponseWriter, err error) {
-	var re *requestError
-	if errors.As(err, &re) {
-		writeError(w, http.StatusBadRequest, re.code, re.msg)
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "internal", err.Error())
-}
-
-func methodNotAllowed(w http.ResponseWriter) {
-	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
-}
-
-func notFound(w http.ResponseWriter) {
-	writeError(w, http.StatusNotFound, "not_found", "not found")
-}
-
-func decodeBody(w http.ResponseWriter, r *http.Request, v interface{}) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		writeError(w, http.StatusBadRequest, "bad_json", "invalid JSON: "+err.Error())
-		return false
-	}
-	return true
-}
-
-// --- middleware ---
-
-func withLogging(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		if r.Method == http.MethodPost || r.Method == http.MethodPut {
-			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
-		}
-		h.ServeHTTP(w, r)
-		log.Printf("[cron] %s %s %v", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
-	})
-}
-
-// sameOrigin is the CSRF check for state-changing requests. Browsers always
-// send Origin on POST/PUT/DELETE fetches; it must name this host. A request
-// without Origin is a non-browser client and is allowed (it needs a bearer
-// token anyway, which a cross-site page cannot obtain).
-func sameOrigin(r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
-		return true
-	}
-	return strings.EqualFold(strings.TrimPrefix(strings.TrimPrefix(origin, "https://"), "http://"), r.Host)
-}
-
-func withCSRF(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodPost, http.MethodPut, http.MethodDelete:
-			if !sameOrigin(r) {
-				writeError(w, http.StatusForbidden, "cross_origin", "cross-origin request rejected")
-				return
-			}
-		}
-		next.ServeHTTP(w, r)
-	})
-}
+func writeRequestError(w http.ResponseWriter, err error) { httpx.WriteErr(w, err) }
 
 // --- tasks ---
 
@@ -465,18 +382,18 @@ func cronValidateHandler(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	errs, valid := cronpkg.Validate(req.Expr)
+	errs, valid := schedule.Validate(req.Expr)
 	resp := struct {
-		Valid    bool                      `json:"valid"`
-		Errors   []cronpkg.ValidationError `json:"errors"`
-		NextRuns []int64                   `json:"next_runs"`
+		Valid    bool                       `json:"valid"`
+		Errors   []schedule.ValidationError `json:"errors"`
+		NextRuns []int64                    `json:"next_runs"`
 	}{Valid: valid, Errors: errs, NextRuns: []int64{}}
 	if resp.Errors == nil {
-		resp.Errors = []cronpkg.ValidationError{}
+		resp.Errors = []schedule.ValidationError{}
 	}
 	now := time.Now()
 	for i := 0; valid && i < 5; i++ {
-		next := cronpkg.Next(req.Expr, now)
+		next := schedule.Next(req.Expr, now)
 		if next.IsZero() {
 			break
 		}
@@ -553,10 +470,10 @@ func importHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := validateRequestLocked(&req, ""); err != nil {
 			mu.Unlock()
-			var re *requestError
+			var re *httpx.Error
 			code := "invalid"
 			if errors.As(err, &re) {
-				code = re.code
+				code = re.Code
 			}
 			resp.Skipped = append(resp.Skipped, skipped{req.Name, err.Error(), code})
 			continue
