@@ -18,8 +18,8 @@ import (
 // Config defines when and where to send a notification.
 type Config struct {
 	Enabled   bool   `json:"enabled"`
-	Type      string `json:"type"`       // "webhook", "email", or "telegram"
-	Target    string `json:"target"`     // URL for webhook, email address for email, chat_id for telegram
+	Type      string `json:"type"`   // "webhook", "email", or "telegram"
+	Target    string `json:"target"` // URL for webhook, email address for email, chat_id for telegram
 	OnSuccess bool   `json:"on_success"`
 	OnFailure bool   `json:"on_failure"`
 
@@ -61,14 +61,14 @@ type webhookPayload struct {
 
 // n8nPayload is a flat JSON body for n8n webhook nodes.
 type n8nPayload struct {
-	Event       string `json:"event"`
-	TaskID      string `json:"task_id"`
-	TaskName    string `json:"task_name"`
-	Command     string `json:"command"`
-	Success     bool   `json:"success"`
-	Message     string `json:"message"`
-	DurationMs  int64  `json:"duration_ms"`
-	Timestamp   int64  `json:"timestamp"`
+	Event      string `json:"event"`
+	TaskID     string `json:"task_id"`
+	TaskName   string `json:"task_name"`
+	Command    string `json:"command"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"duration_ms"`
+	Timestamp  int64  `json:"timestamp"`
 }
 
 // homeAssistantPayload is the JSON body for Home Assistant webhooks.
@@ -232,7 +232,7 @@ func sendWebhook(cfg Config, task TaskInfo, result ResultInfo) error {
 			status = "succeeded"
 		}
 		body, err := json.Marshal(homeAssistantPayload{
-			Message: fmt.Sprintf("Task %s %s", task.Name, status),
+			Message:  fmt.Sprintf("Task %s %s", task.Name, status),
 			TaskName: task.Name, Success: result.Success,
 			DurationMs: result.DurationMs, Output: result.Message, Timestamp: ts,
 		})
