@@ -1,0 +1,404 @@
+// Package notify delivers task results to webhooks, e-mail and Telegram. It
+// is shared by the Lintux modules for ZimaOS; set AppName once at start-up
+// so messages name the module that sent them.
+package notify
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"html"
+	"log"
+	"net/http"
+	"net/smtp"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// AppName is used in subjects and log lines ("[cron]", "[zbackup]").
+var AppName = "lintux"
+
+// Config defines when and where to send a notification.
+type Config struct {
+	Enabled   bool   `json:"enabled"`
+	Type      string `json:"type"`   // "webhook", "email", or "telegram"
+	Target    string `json:"target"` // URL for webhook, email address for email, chat_id for telegram
+	OnSuccess bool   `json:"on_success"`
+	OnFailure bool   `json:"on_failure"`
+
+	// SMTP settings (only for type "email")
+	SMTPHost string `json:"smtp_host,omitempty"`
+	SMTPPort int    `json:"smtp_port,omitempty"`
+	SMTPUser string `json:"smtp_user,omitempty"`
+	SMTPPass string `json:"smtp_pass,omitempty"`
+	SMTPFrom string `json:"smtp_from,omitempty"`
+
+	// Telegram settings (only for type "telegram")
+	TelegramBotToken string `json:"telegram_bot_token,omitempty"`
+
+	// Webhook format (only for type "webhook")
+	WebhookFormat string `json:"webhook_format,omitempty"` // generic, n8n, discord, slack, home_assistant, uptime_kuma
+}
+
+// TaskInfo is a minimal view of a task for notification payloads.
+type TaskInfo struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
+// ResultInfo is a minimal view of an execution result.
+type ResultInfo struct {
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"duration_ms"`
+}
+
+// webhookPayload is the JSON body sent to generic webhook targets.
+type webhookPayload struct {
+	Event     string     `json:"event"`
+	Task      TaskInfo   `json:"task"`
+	Result    ResultInfo `json:"result"`
+	Timestamp int64      `json:"timestamp"`
+}
+
+// n8nPayload is a flat JSON body for n8n webhook nodes.
+type n8nPayload struct {
+	Event      string `json:"event"`
+	TaskID     string `json:"task_id"`
+	TaskName   string `json:"task_name"`
+	Command    string `json:"command"`
+	Success    bool   `json:"success"`
+	Message    string `json:"message"`
+	DurationMs int64  `json:"duration_ms"`
+	Timestamp  int64  `json:"timestamp"`
+}
+
+// homeAssistantPayload is the JSON body for Home Assistant webhooks.
+type homeAssistantPayload struct {
+	Message    string `json:"message"`
+	TaskName   string `json:"task_name"`
+	Success    bool   `json:"success"`
+	DurationMs int64  `json:"duration_ms"`
+	Output     string `json:"output"`
+	Timestamp  int64  `json:"timestamp"`
+}
+
+// ValidWebhookFormats lists supported webhook_format values.
+var ValidWebhookFormats = map[string]bool{
+	"generic": true, "n8n": true, "discord": true,
+	"slack": true, "home_assistant": true, "uptime_kuma": true,
+}
+
+// ValidateWebhookFormat returns an error if format is non-empty and unknown.
+func ValidateWebhookFormat(format string) error {
+	if format == "" {
+		return nil
+	}
+	if !ValidWebhookFormats[format] {
+		return fmt.Errorf("invalid webhook_format: %s", format)
+	}
+	return nil
+}
+
+// Send dispatches notifications for all matching configs.
+// It runs asynchronously and logs errors rather than returning them.
+func Send(configs []Config, task TaskInfo, result ResultInfo) {
+	for _, c := range configs {
+		if !c.Enabled {
+			continue
+		}
+		if result.Success && !c.OnSuccess {
+			continue
+		}
+		if !result.Success && !c.OnFailure {
+			continue
+		}
+		go func(cfg Config) {
+			if err := dispatch(cfg, task, result); err != nil {
+				log.Printf("[%s] notification error (%s -> %s): %v", AppName, cfg.Type, cfg.Target, err)
+			}
+		}(c)
+	}
+}
+
+func dispatch(cfg Config, task TaskInfo, result ResultInfo) error {
+	switch cfg.Type {
+	case "webhook":
+		return sendWebhook(cfg, task, result)
+	case "email":
+		return sendEmail(cfg, task, result)
+	case "telegram":
+		return sendTelegram(cfg, task, result)
+	default:
+		return fmt.Errorf("unsupported notification type: %s", cfg.Type)
+	}
+}
+
+var httpClient = &http.Client{Timeout: 10 * time.Second}
+
+// ValidateWebhookURL accepts absolute http(s) URLs. Private and loopback
+// targets are deliberately allowed: n8n, Home Assistant and Uptime Kuma —
+// the very services the webhook formats exist for — normally run on the
+// same LAN or the same host. The API is session-authenticated and a caller
+// who may create tasks can already run arbitrary commands, so an SSRF
+// restriction here would only break the main use case without protecting
+// anything.
+func ValidateWebhookURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid webhook URL: %w", err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("webhook URL must use http or https, got %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("webhook URL has no host")
+	}
+	return nil
+}
+
+func webhookFormat(cfg Config) string {
+	if cfg.WebhookFormat == "" {
+		return "generic"
+	}
+	return cfg.WebhookFormat
+}
+
+func buildStatusMessage(task TaskInfo, result ResultInfo) string {
+	status := "FAILED"
+	emoji := "\u274c"
+	if result.Success {
+		status = "SUCCESS"
+		emoji = "\u2705"
+	}
+	msg := result.Message
+	if len(msg) > 500 {
+		msg = msg[:500] + "..."
+	}
+	return fmt.Sprintf("%s %s — %s (%dms)\n```%s```", emoji, status, task.Name, result.DurationMs, msg)
+}
+
+func sendWebhook(cfg Config, task TaskInfo, result ResultInfo) error {
+	webhookURL := cfg.Target
+	if err := ValidateWebhookURL(webhookURL); err != nil {
+		return fmt.Errorf("webhook validation: %w", err)
+	}
+
+	format := webhookFormat(cfg)
+	ts := time.Now().Unix()
+
+	switch format {
+	case "uptime_kuma":
+		return sendUptimeKumaWebhook(webhookURL, task, result)
+	case "n8n":
+		body, err := json.Marshal(n8nPayload{
+			Event: "task_completed", TaskID: task.ID, TaskName: task.Name,
+			Command: task.Command, Success: result.Success, Message: result.Message,
+			DurationMs: result.DurationMs, Timestamp: ts,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	case "discord":
+		body, err := json.Marshal(map[string]string{"content": buildStatusMessage(task, result)})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	case "slack":
+		body, err := json.Marshal(map[string]string{"text": buildStatusMessage(task, result)})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	case "home_assistant":
+		status := "failed"
+		if result.Success {
+			status = "succeeded"
+		}
+		body, err := json.Marshal(homeAssistantPayload{
+			Message:  fmt.Sprintf("Task %s %s", task.Name, status),
+			TaskName: task.Name, Success: result.Success,
+			DurationMs: result.DurationMs, Output: result.Message, Timestamp: ts,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	default: // generic
+		body, err := json.Marshal(webhookPayload{
+			Event: "task_completed", Task: task, Result: result, Timestamp: ts,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal payload: %w", err)
+		}
+		return postWebhook(webhookURL, "application/json", body)
+	}
+}
+
+func sendUptimeKumaWebhook(webhookURL string, task TaskInfo, result ResultInfo) error {
+	status := "down"
+	if result.Success {
+		status = "up"
+	}
+	msg := fmt.Sprintf("%s: %s", task.Name, result.Message)
+	if len(msg) > 200 {
+		msg = msg[:200]
+	}
+	u, err := url.Parse(webhookURL)
+	if err != nil {
+		return fmt.Errorf("parse URL: %w", err)
+	}
+	q := u.Query()
+	q.Set("status", status)
+	q.Set("msg", msg)
+	q.Set("ping", strconv.FormatInt(result.DurationMs, 10))
+	u.RawQuery = q.Encode()
+	return postWebhook(u.String(), "application/json", nil)
+}
+
+func postWebhook(webhookURL, contentType string, body []byte) error {
+	var resp *http.Response
+	var err error
+	if body == nil {
+		resp, err = httpClient.Post(webhookURL, contentType, http.NoBody)
+	} else {
+		resp, err = httpClient.Post(webhookURL, contentType, bytes.NewReader(body))
+	}
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", webhookURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("POST %s returned %d", webhookURL, resp.StatusCode)
+	}
+	return nil
+}
+
+func sendEmail(cfg Config, task TaskInfo, result ResultInfo) error {
+	if cfg.SMTPHost == "" || cfg.Target == "" {
+		return fmt.Errorf("email: smtp_host and target (email address) required")
+	}
+	port := cfg.SMTPPort
+	if port == 0 {
+		port = 587
+	}
+	from := cfg.SMTPFrom
+	if from == "" {
+		from = cfg.SMTPUser
+	}
+
+	status := "FAILED"
+	if result.Success {
+		status = "SUCCESS"
+	}
+
+	// Sanitize header values to prevent email header injection
+	sanitize := func(s string) string {
+		s = strings.ReplaceAll(s, "\r", "")
+		s = strings.ReplaceAll(s, "\n", "")
+		return s
+	}
+	subject := sanitize(fmt.Sprintf("[%s] %s: %s", AppName, status, task.Name))
+	from = sanitize(from)
+	body := buildEmailBody(task, result, status)
+
+	msg := strings.Join([]string{
+		"From: " + from,
+		"To: " + sanitize(cfg.Target),
+		"Subject: " + subject,
+		"MIME-Version: 1.0",
+		"Content-Type: text/html; charset=UTF-8",
+		"",
+		body,
+	}, "\r\n")
+
+	addr := cfg.SMTPHost + ":" + strconv.Itoa(port)
+	var auth smtp.Auth
+	if cfg.SMTPUser != "" {
+		auth = smtp.PlainAuth("", cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPHost)
+	}
+
+	if err := smtp.SendMail(addr, auth, from, []string{cfg.Target}, []byte(msg)); err != nil {
+		return fmt.Errorf("smtp send: %w", err)
+	}
+	return nil
+}
+
+// sendTelegram uses HTML parse_mode for consistent formatting (H3).
+func sendTelegram(cfg Config, task TaskInfo, result ResultInfo) error {
+	if cfg.TelegramBotToken == "" || cfg.Target == "" {
+		return fmt.Errorf("telegram: bot_token and chat_id required")
+	}
+	status := "FAILED"
+	emoji := "\u274c"
+	if result.Success {
+		status = "SUCCESS"
+		emoji = "\u2705"
+	}
+	text := fmt.Sprintf("%s <b>%s — %s</b>\n\n<code>%s</code>\nDuration: %dms\n\n<pre>%s</pre>",
+		emoji, status, html.EscapeString(task.Name),
+		html.EscapeString(task.Command), result.DurationMs,
+		html.EscapeString(result.Message))
+	return SendTelegramMessage(cfg.TelegramBotToken, cfg.Target, text)
+}
+
+// SendTelegramMessage sends a message via the Telegram Bot API.
+// Exported so it can be used for test messages.
+func SendTelegramMessage(botToken, chatID, text string) error {
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", botToken)
+	payload := map[string]string{
+		"chat_id":    chatID,
+		"text":       text,
+		"parse_mode": "HTML",
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal telegram payload: %w", err)
+	}
+	resp, err := httpClient.Post(apiURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("telegram API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		var errResp struct {
+			Description string `json:"description"`
+		}
+		json.NewDecoder(resp.Body).Decode(&errResp)
+		return fmt.Errorf("telegram API %d: %s", resp.StatusCode, errResp.Description)
+	}
+	return nil
+}
+
+// buildEmailBody creates an HTML email with all values properly escaped (H2).
+func buildEmailBody(task TaskInfo, result ResultInfo, status string) string {
+	color := "#2ecc71"
+	if !result.Success {
+		color = "#ff5c7a"
+	}
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html><body style="font-family:sans-serif;background:#0b0e12;color:#e6eaf2;padding:24px">
+<div style="max-width:600px;margin:0 auto;background:#12161c;border-radius:12px;padding:24px;border:1px solid #1c2330">
+  <h2 style="margin:0 0 16px;color:%s">%s</h2>
+  <table style="width:100%%;border-collapse:collapse;font-size:14px">
+    <tr><td style="padding:8px 0;color:#93a1b5">Task</td><td style="padding:8px 0">%s</td></tr>
+    <tr><td style="padding:8px 0;color:#93a1b5">Command</td><td style="padding:8px 0"><code>%s</code></td></tr>
+    <tr><td style="padding:8px 0;color:#93a1b5">Duration</td><td style="padding:8px 0">%dms</td></tr>
+    <tr><td style="padding:8px 0;color:#93a1b5">Output</td><td style="padding:8px 0"><pre style="white-space:pre-wrap;margin:0">%s</pre></td></tr>
+  </table>
+  <p style="color:#93a1b5;font-size:12px;margin:16px 0 0">%s</p>
+</div>
+</body></html>`,
+		color,
+		html.EscapeString(status+" — "+task.Name),
+		html.EscapeString(task.Name),
+		html.EscapeString(task.Command),
+		result.DurationMs,
+		html.EscapeString(result.Message),
+		html.EscapeString(AppName))
+}

@@ -4,16 +4,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"log"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	cronpkg "github.com/chicohaager/cron/internal/cron"
-	"github.com/chicohaager/cron/internal/notify"
 	"github.com/chicohaager/cron/internal/storage"
+	"github.com/chicohaager/lintux-modkit/httpx"
+	"github.com/chicohaager/lintux-modkit/notify"
+	"github.com/chicohaager/lintux-modkit/schedule"
 )
 
 const (
@@ -179,16 +179,9 @@ type taskRequest struct {
 	MaxLogEntries int               `json:"max_log_entries,omitempty"`
 }
 
-// requestError is a validation failure with a stable code for the UI.
-type requestError struct {
-	code string
-	msg  string
-}
-
-func (e *requestError) Error() string { return e.msg }
-
+// reqErr is a validation failure with a stable code for the UI.
 func reqErr(code, format string, a ...interface{}) error {
-	return &requestError{code: code, msg: fmt.Sprintf(format, a...)}
+	return httpx.BadRequest(code, format, a...)
 }
 
 // validateRequest checks everything that does not depend on other tasks.
@@ -210,10 +203,10 @@ func validateRequestLocked(req *taskRequest, selfID string) error {
 			return reqErr("interval_invalid", "interval_min must be >= 1")
 		}
 	case typeCron:
-		if errs, ok := cronpkg.Validate(req.CronExpr); !ok {
+		if errs, ok := schedule.Validate(req.CronExpr); !ok {
 			return reqErr("cron_invalid", "invalid cron expression: %s", errs[0].Message)
 		}
-		if cronpkg.Next(req.CronExpr, time.Now()).IsZero() {
+		if schedule.Next(req.CronExpr, time.Now()).IsZero() {
 			return reqErr("cron_never_fires", "cron expression never fires within a year")
 		}
 	default:

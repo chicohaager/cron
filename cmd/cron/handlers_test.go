@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/chicohaager/cron/internal/auth"
-	"github.com/chicohaager/cron/internal/notify"
+	"github.com/chicohaager/lintux-modkit/auth"
+	"github.com/chicohaager/lintux-modkit/httpx"
+	"github.com/chicohaager/lintux-modkit/notify"
 )
 
 // newTestServer serves the real route table without a session check, so
@@ -17,7 +18,7 @@ import (
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	newTestStore(t)
-	srv := httptest.NewServer(withCSRF(newMux(auth.Disabled().Middleware)))
+	srv := httptest.NewServer(httpx.CSRF(newMux(auth.Disabled().Middleware)))
 	t.Cleanup(func() {
 		srv.Close()
 		mu.Lock()

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	cronpkg "github.com/chicohaager/cron/internal/cron"
-	"github.com/chicohaager/cron/internal/notify"
 	"github.com/chicohaager/cron/internal/storage"
+	"github.com/chicohaager/lintux-modkit/notify"
+	"github.com/chicohaager/lintux-modkit/schedule"
 )
 
 // Result codes are stable identifiers the UI translates; Message carries the
@@ -82,7 +82,7 @@ func startIntervalSchedule(t *Task) {
 // schedule was cleared or re-armed while the command was running, so a
 // Pause/Resume during a long run cannot leave two timers alive.
 func scheduleCronNext(t *Task) {
-	next := cronpkg.Next(t.CronExpr, time.Now())
+	next := schedule.Next(t.CronExpr, time.Now())
 	if next.IsZero() {
 		t.NextRunAt = 0
 		return
