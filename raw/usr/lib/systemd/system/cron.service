@@ -1,9 +1,9 @@
 [Unit]
 Description=Cron Service
 After=local-fs.target
-After=casaos-gateway.service
-After=casaos-message-bus.service
-After=casaos-user-service.service
+After=zimaos-gateway.service
+After=zimaos-message-bus.service
+After=zimaos-user.service
 StartLimitIntervalSec=0
 
 [Service]
