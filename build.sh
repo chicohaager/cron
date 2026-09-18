@@ -1,31 +1,30 @@
 #!/bin/bash
+# Build the cron sysext package for ZimaOS.
+#   ./build.sh [amd64|arm64]      (default: amd64)
+# Produces cron-<arch>.raw next to this script and prints its sha256.
 set -euo pipefail
-
-# Build cron raw package for ZimaOS deployment
-# Usage: ./build.sh [arch]
-#   arch: amd64 (default), arm64
+cd "$(dirname "$0")"
 
 ARCH="${1:-amd64}"
-VERSION=$(grep 'version\s*=' cmd/cron/main.go | head -1 | sed 's/.*"\(.*\)".*/\1/')
+case "$ARCH" in
+  amd64) SYSEXT_ARCH=x86-64 ;;
+  arm64) SYSEXT_ARCH=arm64 ;;
+  *) echo "unsupported arch: $ARCH (amd64|arm64)" >&2; exit 2 ;;
+esac
+VERSION=$(sed -n 's/^\s*version\s*=\s*"\(.*\)".*/\1/p' cmd/cron/main.go)
+[ -n "$VERSION" ] || { echo "version not found in cmd/cron/main.go" >&2; exit 1; }
+WEB=raw/usr/share/casaos/www/modules/cron
+OUT="cron-${ARCH}.raw"
 
-echo "Building cron v${VERSION} for linux/${ARCH}..."
+echo "cron v${VERSION} linux/${ARCH}"
 
-# 1. Cross-compile Go binary
-CGO_ENABLED=0 GOOS=linux GOARCH="${ARCH}" go build \
-    -ldflags="-s -w" \
-    -o raw/usr/bin/cron \
-    ./cmd/cron/
+CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags="-s -w" -o raw/usr/bin/cron ./cmd/cron/
 
-echo "Binary built: raw/usr/bin/cron ($(du -h raw/usr/bin/cron | cut -f1))"
+# The sysext must refuse to merge on a host of the other architecture.
+printf 'ID=_any\nARCHITECTURE=%s\n' "$SYSEXT_ARCH" > raw/usr/lib/extension-release.d/extension-release.cron
 
-# 2. Sync frontend files to raw package
-cp app.js    raw/usr/share/casaos/www/modules/cron/app.js
-cp index.html raw/usr/share/casaos/www/modules/cron/index.html
-cp styles.css raw/usr/share/casaos/www/modules/cron/styles.css
+# Cache-bust the frontend with the version so a browser never serves a stale app.js after an upgrade.
+sed -i -E "s/(styles\.css|app\.js)\?v=[0-9.]+/\1?v=${VERSION}/g" "$WEB/index.html"
 
-echo "Frontend files synced to raw package"
-
-# 3. Create .raw sysext package
-mksquashfs raw/ cron.raw -noappend -comp gzip -quiet
-
-echo "Done. Package: cron.raw ($(du -h cron.raw | cut -f1))"
+mksquashfs raw/ "$OUT" -noappend -comp gzip -quiet
+sha256sum "$OUT" | tee "$OUT.sha256"
