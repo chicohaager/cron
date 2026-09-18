@@ -46,6 +46,7 @@ Get notified when tasks succeed or fail. Three notification channels available:
     "enabled": true,
     "type": "webhook",
     "target": "https://your-webhook.example.com/hook",
+    "webhook_format": "generic",
     "on_success": false,
     "on_failure": true
   }, {
@@ -68,7 +69,18 @@ Configure once in Settings (gear icon), applies to all tasks:
 - `PUT /cron/settings` — set bot token, chat ID, trigger conditions
 - `POST /cron/settings/test-telegram` — send a test message
 
-**Webhook payload:**
+**Webhook format** (`webhook_format` field — select in UI or set via API):
+
+| Format | Value | Payload |
+|--------|-------|---------|
+| Generic | `generic` (default) | Nested JSON with `event`, `task`, `result`, `timestamp` |
+| n8n | `n8n` | Flat JSON: `event`, `task_id`, `task_name`, `command`, `success`, `message`, `duration_ms`, `timestamp` |
+| Discord | `discord` | `{"content": "✅ SUCCESS — TaskName (1250ms)\n```output```"}` |
+| Slack | `slack` | `{"text": "..."}` — same message as Discord |
+| Home Assistant | `home_assistant` | `{"message", "task_name", "success", "duration_ms", "output", "timestamp"}` |
+| Uptime Kuma | `uptime_kuma` | Query params on push URL: `?status=up\|down&msg=...&ping=duration_ms` |
+
+**Generic webhook payload:**
 ```json
 {
   "event": "task_completed",
@@ -77,8 +89,6 @@ Configure once in Settings (gear icon), applies to all tasks:
   "timestamp": 1710000000
 }
 ```
-
-Works with n8n, Home Assistant, Discord webhooks, Slack, Uptime Kuma, or any HTTP endpoint.
 
 ### 4. Categories, Tags & Priority
 
@@ -261,8 +271,14 @@ go run ./cmd/cron
    - Environment variables (key-value editor)
    - Max log entries
    - Task dependencies (select from existing tasks)
-   - Webhook notification URL + triggers
+   - Webhook type (Generic, n8n, Discord, Slack, Home Assistant, Uptime Kuma) + URL + triggers
 6. Click **Create**
+
+### Editing a Task
+
+1. Click **Edit** on any task row
+2. The create form opens pre-filled with current settings
+3. Modify fields and click **Save** (`PUT /cron/tasks/{id}`)
 
 ### Task List
 
@@ -270,7 +286,8 @@ go run ./cmd/cron
 - **Run Once** — trigger immediate execution
 - **Pause/Resume** — toggle the schedule
 - **Show Logs** — expand inline log viewer with search, CSV/JSON export
-- **Delete** — remove the task
+- **Edit** — modify task settings
+- **Delete** — remove the task (confirmation dialog)
 
 ### Log Viewer
 
@@ -294,6 +311,7 @@ Base path: `/cron`
 | `GET` | `/tasks?tag=X` | Filter by tag |
 | `POST` | `/tasks` | Create a task |
 | `GET` | `/tasks/{id}` | Get single task |
+| `PUT` | `/tasks/{id}` | Update a task |
 | `DELETE` | `/tasks/{id}` | Delete a task |
 | `POST` | `/tasks/{id}/run` | Run task once |
 | `POST` | `/tasks/{id}/toggle` | Pause/resume task |
