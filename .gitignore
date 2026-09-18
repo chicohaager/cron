@@ -1,8 +1,7 @@
-# Binaries (build artifacts — CI builds fresh)
+# Build artefacts — CI builds fresh
 /cron
+/zima-cron
 raw/usr/bin/cron
-
-# Packages
 *.raw
 
 # Temp files
@@ -19,6 +18,3 @@ tasks.json
 # OS
 .DS_Store
 Thumbs.db
-
-# Test artifacts
-/tmp/
