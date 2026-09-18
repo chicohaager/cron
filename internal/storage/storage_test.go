@@ -3,6 +3,7 @@ package storage
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -129,5 +130,45 @@ func TestSaveTask_WithLastResult(t *testing.T) {
 	}
 	if !loaded[0].LastResult.Success || loaded[0].LastResult.Message != "done" {
 		t.Fatalf("unexpected LastResult: %+v", loaded[0].LastResult)
+	}
+}
+
+func TestLogsLiveInTheirOwnFile(t *testing.T) {
+	fs := tempStorage(t)
+	if err := fs.SaveTask(&TaskData{ID: "a", Name: "a", Command: "true", Type: "interval"}); err != nil {
+		t.Fatal(err)
+	}
+	logs := []LogEntryData{{Time: 1, Success: true, Code: "completed", Message: "hi"}}
+	if err := fs.SaveLogs("a", logs); err != nil {
+		t.Fatal(err)
+	}
+	got, err := fs.LoadLogs("a")
+	if err != nil || len(got) != 1 || got[0].Message != "hi" || got[0].Code != "completed" {
+		t.Fatalf("LoadLogs = %+v, %v", got, err)
+	}
+	// tasks.json must not carry the history
+	raw, _ := os.ReadFile(fs.path)
+	if strings.Contains(string(raw), `"logs"`) {
+		t.Error("tasks.json still embeds logs")
+	}
+	if _, err := os.Stat(filepath.Join(fs.logsDir, "a.json")); err != nil {
+		t.Errorf("logs/a.json missing: %v", err)
+	}
+	if err := fs.DeleteLogs("a"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := fs.LoadLogs("a"); len(got) != 0 {
+		t.Errorf("logs survived DeleteLogs: %d", len(got))
+	}
+	if err := fs.DeleteLogs("never-existed"); err != nil {
+		t.Errorf("DeleteLogs on missing file must be a no-op, got %v", err)
+	}
+}
+
+func TestLogPathRejectsTraversal(t *testing.T) {
+	fs := tempStorage(t)
+	p := fs.logPath("../../etc/passwd")
+	if filepath.Dir(p) != fs.logsDir {
+		t.Fatalf("log path escaped logs dir: %s", p)
 	}
 }

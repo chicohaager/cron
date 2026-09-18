@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"html"
 	"log"
-	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -134,39 +133,23 @@ func dispatch(cfg Config, task TaskInfo, result ResultInfo) error {
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}
 
-// isPrivateIP checks if an IP is in a private/reserved range (H1 SSRF protection).
-func isPrivateIP(ip net.IP) bool {
-	privateRanges := []string{
-		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-		"127.0.0.0/8", "169.254.0.0/16", "::1/128", "fc00::/7",
-	}
-	for _, cidr := range privateRanges {
-		_, network, _ := net.ParseCIDR(cidr)
-		if network.Contains(ip) {
-			return true
-		}
-	}
-	return false
-}
-
-// validateWebhookURL ensures the webhook URL is safe (H1 SSRF protection).
-func validateWebhookURL(rawURL string) error {
+// ValidateWebhookURL accepts absolute http(s) URLs. Private and loopback
+// targets are deliberately allowed: n8n, Home Assistant and Uptime Kuma —
+// the very services the webhook formats exist for — normally run on the
+// same LAN or the same host. The API is session-authenticated and a caller
+// who may create tasks can already run arbitrary commands, so an SSRF
+// restriction here would only break the main use case without protecting
+// anything.
+func ValidateWebhookURL(rawURL string) error {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+		return fmt.Errorf("invalid webhook URL: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("webhook URL must use http or https scheme, got %q", parsed.Scheme)
+		return fmt.Errorf("webhook URL must use http or https, got %q", parsed.Scheme)
 	}
-	host := parsed.Hostname()
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return fmt.Errorf("cannot resolve host %q: %w", host, err)
-	}
-	for _, ip := range ips {
-		if isPrivateIP(ip) {
-			return fmt.Errorf("webhook URL resolves to private IP %s (blocked)", ip)
-		}
+	if parsed.Host == "" {
+		return fmt.Errorf("webhook URL has no host")
 	}
 	return nil
 }
@@ -194,7 +177,7 @@ func buildStatusMessage(task TaskInfo, result ResultInfo) string {
 
 func sendWebhook(cfg Config, task TaskInfo, result ResultInfo) error {
 	webhookURL := cfg.Target
-	if err := validateWebhookURL(webhookURL); err != nil {
+	if err := ValidateWebhookURL(webhookURL); err != nil {
 		return fmt.Errorf("webhook validation: %w", err)
 	}
 
