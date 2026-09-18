@@ -1571,7 +1571,17 @@ func cronNext(expr string, from time.Time) time.Time {
 		monthOk := monSet.set[mon]
 		domOk := domSet.set[dom]
 		dowOk := dowSet.set[dow]
-		dayOk := (domSet.isAll && dowSet.isAll) || (domSet.isAll && dowOk) || (dowSet.isAll && domOk) || (domOk || dowOk)
+		var dayOk bool
+		switch {
+		case domSet.isAll && dowSet.isAll:
+			dayOk = true
+		case domSet.isAll:
+			dayOk = dowOk
+		case dowSet.isAll:
+			dayOk = domOk
+		default:
+			dayOk = domOk || dowOk
+		}
 		if minuteOk && hourOk && monthOk && dayOk {
 			return d
 		}
