@@ -54,11 +54,15 @@ zpkg install zima_cron
 
 **Manual:** download `cron-amd64.raw` (or `cron-arm64.raw`) from the
 [releases](https://github.com/chicohaager/cron/releases), copy it to the
-host and run
+host **as `cron.raw`** and run
 
 ```sh
-sudo zpkg install /tmp/cron-amd64.raw
+sudo zpkg install /tmp/cron.raw
 ```
+
+`zpkg` accepts the image only under the name that matches
+`extension-release.cron` inside it; any other file name is refused with
+"module not pass validate" (measured on ZimaOS 1.7.1).
 
 The service starts by itself and appears as **Cron** on the ZimaOS
 dashboard.
@@ -66,7 +70,7 @@ dashboard.
 ### Upgrading from 0.2.x
 
 ```sh
-sudo zpkg remove cron && sudo zpkg install /tmp/cron-amd64.raw
+sudo zpkg remove cron && sudo zpkg install /tmp/cron.raw
 ```
 
 Tasks, settings and history are kept (`/DATA/AppData/cron`). On the first
