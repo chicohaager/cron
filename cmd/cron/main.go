@@ -64,7 +64,7 @@ func main() {
 
 	verifier := newVerifier(runtimePath)
 	srv := &http.Server{
-		Handler:           withCSRF(newMux(verifier.Middleware)),
+		Handler:           withStatic(withCSRF(newMux(verifier.Middleware))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go shutdownOnSignal(srv)

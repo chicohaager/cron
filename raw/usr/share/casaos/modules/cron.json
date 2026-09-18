@@ -2,12 +2,12 @@
   "name": "cron",
   "ui": {
     "name": "cron",
-    "title": { "en_us": "Cron", "zh_cn": "调度器" },
+    "title": { "en_us": "Cron", "de_de": "Cron", "fr_fr": "Cron", "zh_cn": "Cron 调度器" },
     "prefetch": true,
     "show": true,
     "entry": "/modules/cron/index.html",
     "icon": "/modules/cron/appicon.svg",
-    "description": "Assist",
+    "description": "Task scheduler: run commands on an interval or a cron expression, with history and notifications",
     "formality": {
       "type": "newtab",
       "props": { "width": "100vh", "height": "100vh", "hasModalCard": true, "animation": "zoom-in" }

@@ -24,7 +24,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH="$ARCH" go build -trimpath -ldflags="-s -w" -o r
 printf 'ID=_any\nARCHITECTURE=%s\n' "$SYSEXT_ARCH" > raw/usr/lib/extension-release.d/extension-release.cron
 
 # Cache-bust the frontend with the version so a browser never serves a stale app.js after an upgrade.
-sed -i -E "s/(styles\.css|app\.js)\?v=[0-9.]+/\1?v=${VERSION}/g" "$WEB/index.html"
+sed -i -E "s/(styles\.css|app\.js|i18n\.js)\?v=[0-9.]+/\1?v=${VERSION}/g" "$WEB/index.html"
 
 mksquashfs raw/ "$OUT" -noappend -comp gzip -quiet
 sha256sum "$OUT" | tee "$OUT.sha256"
