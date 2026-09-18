@@ -57,9 +57,9 @@
     </main>
     <div class="modal-overlay" id="createTaskModal">
       <div class="modal">
-        <h3 data-i18n="createTitle">Create Task</h3>
+        <h3 id="taskModalTitle" data-i18n="createTitle">Create Task</h3>
         <div class="modal-body">
-        <div class="form-row">
+        <div class="form-row" id="templateRow">
           <label for="templateSelect" data-i18n="template">Start from Template</label>
           <select id="templateSelect">
             <option value="" data-i18n-opt="noTemplate">-- Blank Task --</option>
@@ -134,6 +134,15 @@
           </div>
           <div class="form-row">
             <label data-i18n="webhookLabel">Webhook Notification</label>
+            <label for="webhookFormatSelect" data-i18n="webhookFormat">Webhook Type</label>
+            <select id="webhookFormatSelect">
+              <option value="generic" data-i18n-opt="webhookGeneric">Generic (JSON)</option>
+              <option value="n8n" data-i18n-opt="webhookN8n">n8n</option>
+              <option value="discord" data-i18n-opt="webhookDiscord">Discord</option>
+              <option value="slack" data-i18n-opt="webhookSlack">Slack</option>
+              <option value="home_assistant" data-i18n-opt="webhookHA">Home Assistant</option>
+              <option value="uptime_kuma" data-i18n-opt="webhookKuma">Uptime Kuma</option>
+            </select>
             <input id="webhookUrlInput" type="url" placeholder="https://example.com/webhook" data-i18n-ph="phWebhookUrl">
             <div class="checkbox-row">
               <label><input type="checkbox" id="notifyOnSuccess"> <span data-i18n="onSuccess">On Success</span></label>
@@ -161,6 +170,18 @@
         <div class="modal-actions">
           <button id="cancelCreateBtn" data-i18n="cancel">Cancel</button>
           <button id="createTaskBtn" class="primary" data-i18n="create">Create</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-overlay" id="confirmModal">
+      <div class="modal modal-sm">
+        <h3 data-i18n="deleteConfirmTitle">Delete Task?</h3>
+        <div class="modal-body">
+          <p id="confirmMessage" class="muted"></p>
+        </div>
+        <div class="modal-actions">
+          <button id="confirmCancelBtn" data-i18n="cancel">Cancel</button>
+          <button id="confirmOkBtn" class="danger" data-i18n="deleteConfirmBtn">Delete</button>
         </div>
       </div>
     </div>
