@@ -1,15 +1,29 @@
 [Unit]
-Description=Cron Service
-After=local-fs.target
-After=zimaos-gateway.service
-After=zimaos-message-bus.service
-After=zimaos-user.service
+Description=Cron - task scheduler for ZimaOS
+Documentation=https://github.com/chicohaager/cron
+# Platform units as named on ZimaOS 1.7.1 (casaos-* no longer exist).
+# Ordering only: route registration retries on its own if the gateway is late.
+After=network-online.target zimaos-gateway.service zimaos-message-bus.service zimaos-user.service
+Wants=network-online.target
+# /DATA is a late bind mount on ZimaOS; local-fs.target does not order behind it.
+RequiresMountsFor=/DATA/AppData
 StartLimitIntervalSec=0
 
 [Service]
+Type=simple
 ExecStart=/usr/bin/cron
 Restart=always
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
+# Tasks are arbitrary root commands (docker, /DATA, /tmp), so the sandbox is
+# deliberately narrow: no ProtectSystem/ProtectHome/PrivateTmp — the Cleanup
+# template must see the host's /tmp and backups must reach /DATA.
+ProtectKernelTunables=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target

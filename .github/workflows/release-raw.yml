@@ -1,75 +1,60 @@
-name: Release RAW
+name: Build and release
 
 on:
   push:
-    tags:
-      - 'v*'
-  release:
-    types: [published]
+    branches: [main]
+    tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: i18n keys must be complete in every language
+        run: python3 tools/check-i18n.py
 
-      - name: Run tests
-        run: go test ./...
-
-      - name: Build backend (linux amd64)
-        run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-            -ldflags="-s -w" \
-            -o ./raw/usr/bin/cron \
-            ./cmd/cron
-          chmod +x ./raw/usr/bin/cron
-
-      - name: Sync frontend files
-        run: |
-          cp app.js    raw/usr/share/casaos/www/modules/cron/app.js
-          cp index.html raw/usr/share/casaos/www/modules/cron/index.html
-          cp styles.css raw/usr/share/casaos/www/modules/cron/styles.css
-
-      - name: Install squashfs-tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y squashfs-tools
-
-      - name: Package RAW
-        run: |
-          mksquashfs raw/ cron.raw -noappend -comp gzip
-          ls -lh cron.raw
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          name: cron.raw
-          path: cron.raw
-
-      - name: Get version (push/dispatch)
-        id: get_version_push
-        if: ${{ github.event_name != 'release' }}
-        run: |
-          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
-
-      - name: Get version (release)
-        id: get_version_release
-        if: ${{ github.event_name == 'release' }}
-        run: |
-          echo "VERSION=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-
-      - name: Update release
-        uses: softprops/action-gh-release@v1
+          go-version: '1.22'
+      - run: sudo apt-get update && sudo apt-get install -y squashfs-tools
+      - run: ./build.sh ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
         with:
-          files: ./cron.raw
-          tag_name: ${{ steps.get_version_push.outputs.VERSION || steps.get_version_release.outputs.VERSION }}
+          name: cron-${{ matrix.arch }}
+          path: |
+            cron-${{ matrix.arch }}.raw
+            cron-${{ matrix.arch }}.raw.sha256
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Keep cron.raw — the asset name v0.2.0 shipped and zpkg installed (asset resolution of zpkg is not documented)
+        run: cp dist/cron-amd64.raw dist/cron.raw && cp dist/cron-amd64.raw.sha256 dist/cron.raw.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

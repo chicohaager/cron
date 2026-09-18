@@ -18,3 +18,4 @@ tasks.json
 # OS
 .DS_Store
 Thumbs.db
+*.sha256
