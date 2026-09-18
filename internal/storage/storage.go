@@ -39,12 +39,14 @@ type LogEntryData struct {
 	Time       int64  `json:"time"`
 	DurationMs int64  `json:"duration_ms"`
 	Success    bool   `json:"success"`
+	Code       string `json:"code,omitempty"`
 	Message    string `json:"message"`
 }
 
 // ResultData is the persistable form of a Result.
 type ResultData struct {
 	Success bool   `json:"success"`
+	Code    string `json:"code,omitempty"`
 	Message string `json:"message"`
 }
 

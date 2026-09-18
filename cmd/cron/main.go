@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -63,20 +62,27 @@ type Task struct {
 	// Runtime state
 	Executing bool `json:"executing"`
 
-	logs   []LogEntry
-	timer  *time.Timer
-	ticker *time.Ticker
-	done   chan struct{}
+	logs       []LogEntry
+	timer      *time.Timer
+	ticker     *time.Ticker
+	done       chan struct{}
+	retryTimer *time.Timer
+	gen        uint64 // bumped on every (re)arm/clear; callbacks compare it
 }
 
+// Result is the outcome of the last run. Code is a stable identifier the UI
+// translates (see scheduler.go); Message is raw command output.
 type Result struct {
 	Success bool   `json:"success"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
+
 type LogEntry struct {
 	Time       int64  `json:"time"`
 	DurationMs int64  `json:"duration_ms"`
 	Success    bool   `json:"success"`
+	Code       string `json:"code"`
 	Message    string `json:"message"`
 }
 
@@ -460,8 +466,8 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		mu.Lock()
 		tasks[id] = t
-		mu.Unlock()
 		startSchedule(t)
+		mu.Unlock()
 		persistTask(t)
 		jsonResponse(w)
 		json.NewEncoder(w).Encode(sanitizeTask(t))
@@ -562,7 +568,9 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(405)
 			return
 		}
+		mu.Lock()
 		toggleTask(t)
+		mu.Unlock()
 		persistTask(t)
 		jsonResponse(w)
 		json.NewEncoder(w).Encode(sanitizeTask(t))
@@ -635,6 +643,7 @@ func taskActionHandler(w http.ResponseWriter, r *http.Request) {
 			mu.Lock()
 			t.logs = nil
 			mu.Unlock()
+			persistTask(t)
 			w.WriteHeader(204)
 		} else {
 			w.WriteHeader(405)
@@ -650,6 +659,7 @@ func sanitizeTask(t *Task) *Task {
 	cp.ticker = nil
 	cp.timer = nil
 	cp.done = nil
+	cp.retryTimer = nil
 	// Mask sensitive fields in notification configs
 	if len(cp.Notifications) > 0 {
 		masked := make([]notify.Config, len(cp.Notifications))
@@ -665,202 +675,6 @@ func sanitizeTask(t *Task) *Task {
 		cp.Notifications = masked
 	}
 	return &cp
-}
-
-func startSchedule(t *Task) {
-	clearSchedule(t)
-	if t.Type == "interval" {
-		t.ticker = time.NewTicker(t.Interval)
-		t.done = make(chan struct{})
-		t.NextRunAt = time.Now().Add(t.Interval).UnixMilli()
-		go func(id string, done <-chan struct{}) {
-			for {
-				select {
-				case <-done:
-					return
-				case <-t.ticker.C:
-					mu.Lock()
-					tt := tasks[id]
-					mu.Unlock()
-					if tt == nil || tt.Status != "running" {
-						continue
-					}
-					runTaskOnce(tt)
-					tt.NextRunAt = time.Now().Add(tt.Interval).UnixMilli()
-				}
-			}
-		}(t.ID, t.done)
-	} else {
-		scheduleCronNext(t)
-	}
-}
-
-func clearSchedule(t *Task) {
-	if t.done != nil {
-		close(t.done)
-		t.done = nil
-	}
-	if t.ticker != nil {
-		t.ticker.Stop()
-		t.ticker = nil
-	}
-	if t.timer != nil {
-		t.timer.Stop()
-		t.timer = nil
-	}
-}
-
-func toggleTask(t *Task) {
-	if t.Status == "running" {
-		t.Status = "paused"
-		clearSchedule(t)
-		t.NextRunAt = 0
-	} else {
-		t.Status = "running"
-		startSchedule(t)
-	}
-}
-
-func runTaskOnce(t *Task) {
-	// Concurrency limit via non-blocking select with timeout
-	select {
-	case execSem <- struct{}{}:
-	case <-time.After(30 * time.Second):
-		log.Printf("[cron] Task %s skipped: execution queue full", t.ID)
-		return
-	}
-	defer func() { <-execSem }()
-
-	// Copy fields under lock for safe access (C1)
-	mu.Lock()
-	taskID := t.ID
-	taskName := t.Name
-	taskCommand := t.Command
-	taskTimeoutSec := t.TimeoutSec
-	taskRetryCount := t.RetryCount
-	taskRetryDelaySec := t.RetryDelaySec
-	taskCurrentRetry := t.CurrentRetry
-	taskMaxLogEntries := t.MaxLogEntries
-	taskDependsOn := append([]string(nil), t.DependsOn...)
-	taskNotifications := append([]notify.Config(nil), t.Notifications...)
-	taskEnv := make(map[string]string, len(t.Env))
-	for k, v := range t.Env {
-		taskEnv[k] = v
-	}
-	mu.Unlock()
-
-	// Check dependencies before running (uses copied deps, no lock needed) (C2)
-	if !canRunWithDeps(taskDependsOn) {
-		log.Printf("[cron] Task %s skipped: dependencies not met", taskID)
-		mu.Lock()
-		t.LastResult = &Result{Success: false, Message: "Skipped: dependency not met"}
-		mu.Unlock()
-		persistTask(t)
-		return
-	}
-
-	mu.Lock()
-	t.Executing = true
-	mu.Unlock()
-
-	start := time.Now()
-
-	// Configurable timeout (default: 2 minutes)
-	timeout := time.Duration(taskTimeoutSec) * time.Second
-	if timeout <= 0 {
-		timeout = 2 * time.Minute
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", taskCommand)
-
-	// Environment variables
-	if len(taskEnv) > 0 {
-		cmd.Env = os.Environ()
-		for k, v := range taskEnv {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
-	}
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	finished := time.Now()
-	success := err == nil && ctx.Err() == nil
-
-	var msg string
-	if success {
-		msg = strings.TrimSpace(stdout.String())
-		if msg == "" {
-			msg = "Execution completed"
-		}
-	} else {
-		// On failure, combine stdout + stderr for full context
-		combined := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
-		if combined == "" || combined == "\n" {
-			if ctx.Err() == context.DeadlineExceeded {
-				combined = fmt.Sprintf("Timeout after %ds", taskTimeoutSec)
-			} else if err != nil {
-				combined = err.Error()
-			}
-		}
-		msg = strings.TrimSpace(combined)
-	}
-	if len(msg) > 4000 {
-		msg = msg[:4000] + "..."
-	}
-
-	durationMs := finished.Sub(start).Milliseconds()
-
-	mu.Lock()
-	t.Executing = false
-	t.LastRunAt = finished.UnixMilli()
-	t.LastResult = &Result{Success: success, Message: msg}
-	t.logs = append([]LogEntry{{Time: t.LastRunAt, DurationMs: durationMs, Success: success, Message: msg}}, t.logs...)
-	// Log rotation
-	maxLogs := taskMaxLogEntries
-	if maxLogs <= 0 {
-		maxLogs = 100 // default
-	}
-	if len(t.logs) > maxLogs {
-		t.logs = t.logs[:maxLogs]
-	}
-	// Retry logic — read/write CurrentRetry under lock (C1)
-	shouldRetry := false
-	if !success && taskRetryCount > 0 && taskCurrentRetry < taskRetryCount {
-		t.CurrentRetry++
-		shouldRetry = true
-	} else {
-		t.CurrentRetry = 0
-	}
-	mu.Unlock()
-
-	if shouldRetry {
-		retryDelay := time.Duration(taskRetryDelaySec) * time.Second
-		if retryDelay <= 0 {
-			retryDelay = 10 * time.Second
-		}
-		log.Printf("[cron] Task %s failed, retrying %d/%d in %v", taskID, taskCurrentRetry+1, taskRetryCount, retryDelay)
-		time.AfterFunc(retryDelay, func() {
-			runTaskOnce(t)
-		})
-	} else {
-		// Send notifications only on final result (not during retries)
-		taskInfo := notify.TaskInfo{ID: taskID, Name: taskName, Command: taskCommand}
-		resultInfo := notify.ResultInfo{Success: success, Message: msg, DurationMs: durationMs}
-		if len(taskNotifications) > 0 {
-			notify.Send(taskNotifications, taskInfo, resultInfo)
-		}
-		// Global Telegram notification (from settings)
-		if tgCfg := getTelegramNotifyConfig(); tgCfg != nil {
-			notify.Send([]notify.Config{*tgCfg}, taskInfo, resultInfo)
-		}
-	}
-
-	persistTask(t)
 }
 
 // taskToData converts an in-memory Task to a persistable TaskData.
@@ -883,6 +697,7 @@ func taskToData(t *Task) *storage.TaskData {
 	if t.LastResult != nil {
 		td.LastResult = &storage.ResultData{
 			Success: t.LastResult.Success,
+			Code:    t.LastResult.Code,
 			Message: t.LastResult.Message,
 		}
 	}
@@ -903,7 +718,7 @@ func taskToData(t *Task) *storage.TaskData {
 		for i, l := range t.logs {
 			td.Logs[i] = storage.LogEntryData{
 				Time: l.Time, DurationMs: l.DurationMs,
-				Success: l.Success, Message: l.Message,
+				Success: l.Success, Code: l.Code, Message: l.Message,
 			}
 		}
 	}
@@ -936,6 +751,7 @@ func dataToTask(td *storage.TaskData) *Task {
 	if td.LastResult != nil {
 		t.LastResult = &Result{
 			Success: td.LastResult.Success,
+			Code:    td.LastResult.Code,
 			Message: td.LastResult.Message,
 		}
 	}
@@ -951,7 +767,7 @@ func dataToTask(td *storage.TaskData) *Task {
 		for i, l := range td.Logs {
 			t.logs[i] = LogEntry{
 				Time: l.Time, DurationMs: l.DurationMs,
-				Success: l.Success, Message: l.Message,
+				Success: l.Success, Code: l.Code, Message: l.Message,
 			}
 		}
 	}
@@ -973,59 +789,16 @@ func loadPersistedTasks() error {
 
 	// Restart schedules for running tasks
 	mu.Lock()
-	running := make([]*Task, 0)
+	running := 0
 	for _, t := range tasks {
 		if t.Status == "running" {
-			running = append(running, t)
+			startSchedule(t)
+			running++
 		}
 	}
 	mu.Unlock()
-
-	for _, t := range running {
-		startSchedule(t)
-	}
-	log.Printf("[cron] Loaded %d tasks from storage (%d running)", len(persisted), len(running))
+	log.Printf("[cron] Loaded %d tasks from storage (%d running)", len(persisted), running)
 	return nil
-}
-
-// persistTask saves a single task to storage (best-effort, logs errors).
-func persistTask(t *Task) {
-	if store == nil {
-		return
-	}
-	if err := store.SaveTask(taskToData(t)); err != nil {
-		log.Printf("[cron] Error persisting task %s: %v", t.ID, err)
-	}
-}
-
-// persistDelete removes a task from storage (best-effort, logs errors).
-func persistDelete(id string) {
-	if store == nil {
-		return
-	}
-	if err := store.DeleteTask(id); err != nil {
-		log.Printf("[cron] Error deleting task %s from storage: %v", id, err)
-	}
-}
-
-// canRunWithDeps checks whether all dependencies have succeeded.
-// Takes a pre-copied dependency list to avoid double-locking (C2).
-func canRunWithDeps(dependsOn []string) bool {
-	if len(dependsOn) == 0 {
-		return true
-	}
-	mu.RLock()
-	defer mu.RUnlock()
-	for _, depID := range dependsOn {
-		dep, ok := tasks[depID]
-		if !ok {
-			continue // ignore missing dependencies
-		}
-		if dep.LastResult == nil || !dep.LastResult.Success {
-			return false
-		}
-	}
-	return true
 }
 
 func hasTag(tags []string, tag string) bool {
@@ -1524,22 +1297,4 @@ func getTelegramNotifyConfig() *notify.Config {
 		OnFailure:        s.TelegramOnFailure,
 		TelegramBotToken: s.TelegramBotToken,
 	}
-}
-
-func scheduleCronNext(t *Task) {
-	next := cronpkg.Next(t.CronExpr, time.Now())
-	if next.IsZero() {
-		return
-	}
-	delay := time.Until(next)
-	if delay < 0 {
-		delay = 0
-	}
-	t.NextRunAt = next.UnixMilli()
-	t.timer = time.AfterFunc(delay, func() {
-		if t.Status == "running" {
-			runTaskOnce(t)
-			scheduleCronNext(t)
-		}
-	})
 }
