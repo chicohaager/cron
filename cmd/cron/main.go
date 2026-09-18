@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -451,7 +450,7 @@ func tasksHandler(w http.ResponseWriter, r *http.Request) {
 			TimeoutSec: req.TimeoutSec, RetryCount: req.RetryCount,
 			RetryDelaySec: req.RetryDelaySec, Env: req.Env,
 			Notifications: req.Notifications,
-			Category: req.Category, Tags: req.Tags, Priority: req.Priority,
+			Category:      req.Category, Tags: req.Tags, Priority: req.Priority,
 			DependsOn: req.DependsOn, AllowParallel: req.AllowParallel,
 			MaxLogEntries: req.MaxLogEntries,
 		}
@@ -1107,7 +1106,7 @@ func cronValidateHandler(w http.ResponseWriter, r *http.Request) {
 	if valid {
 		now := time.Now()
 		for i := 0; i < 5; i++ {
-			next := cronNext(req.Expr, now)
+			next := cronpkg.Next(req.Expr, now)
 			if next.IsZero() {
 				break
 			}
@@ -1269,7 +1268,7 @@ func importHandler(w http.ResponseWriter, r *http.Request) {
 			TimeoutSec: req.TimeoutSec, RetryCount: req.RetryCount,
 			RetryDelaySec: req.RetryDelaySec, Env: req.Env,
 			Notifications: req.Notifications,
-			Category: req.Category, Tags: req.Tags, Priority: req.Priority,
+			Category:      req.Category, Tags: req.Tags, Priority: req.Priority,
 			DependsOn: req.DependsOn, AllowParallel: req.AllowParallel,
 			MaxLogEntries: req.MaxLogEntries,
 		}
@@ -1347,49 +1346,49 @@ var builtinTemplates = []taskTemplate{
 		ID: "backup-appdata", Name: "AppData Backup",
 		Description: "Archive /DATA/AppData to /DATA/backups/",
 		Command:     "mkdir -p /DATA/backups && tar -czf /DATA/backups/appdata_$(date +%Y%m%d_%H%M%S).tar.gz -C /DATA AppData",
-		Type: "cron", CronExpr: "0 2 * * *",
+		Type:        "cron", CronExpr: "0 2 * * *",
 		Category: "backup", TimeoutSec: 600,
 	},
 	{
 		ID: "cleanup-tmp", Name: "Cleanup Temp Files",
 		Description: "Remove files older than 7 days from /tmp",
 		Command:     "find /tmp -type f -mtime +7 -delete 2>/dev/null; echo cleaned",
-		Type: "cron", CronExpr: "0 4 * * 0",
+		Type:        "cron", CronExpr: "0 4 * * 0",
 		Category: "maintenance", TimeoutSec: 120,
 	},
 	{
 		ID: "health-check", Name: "System Health Check",
 		Description: "Check disk space, memory, and load average",
 		Command:     "echo '=== Disk ===' && df -h / /DATA 2>/dev/null && echo '=== Memory ===' && free -h && echo '=== Load ===' && uptime",
-		Type: "interval", IntervalMin: 30,
+		Type:        "interval", IntervalMin: 30,
 		Category: "monitoring", TimeoutSec: 30,
 	},
 	{
 		ID: "docker-prune", Name: "Docker Cleanup",
 		Description: "Remove unused Docker images, containers, and volumes",
 		Command:     "DOCKER_CONFIG=/DATA/.docker docker system prune -af --volumes 2>&1 || echo 'docker not available'",
-		Type: "cron", CronExpr: "0 3 * * 0",
+		Type:        "cron", CronExpr: "0 3 * * 0",
 		Category: "maintenance", TimeoutSec: 300,
 	},
 	{
 		ID: "update-check", Name: "System Update Check",
 		Description: "Check for available system updates",
 		Command:     "cat /etc/os-release && echo '---' && uname -r",
-		Type: "cron", CronExpr: "0 8 * * 1",
+		Type:        "cron", CronExpr: "0 8 * * 1",
 		Category: "monitoring", TimeoutSec: 60,
 	},
 	{
 		ID: "ssl-cert-check", Name: "SSL Certificate Expiry Check",
 		Description: "Check SSL certificate expiry for a domain",
 		Command:     "echo | openssl s_client -connect example.com:443 -servername example.com 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo 'openssl not available'",
-		Type: "cron", CronExpr: "0 9 * * *",
+		Type:        "cron", CronExpr: "0 9 * * *",
 		Category: "monitoring", TimeoutSec: 30,
 	},
 	{
 		ID: "docker-status", Name: "Docker Container Status",
 		Description: "List all Docker containers with status and resource usage",
 		Command:     "docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' 2>&1 && echo '---' && docker stats --no-stream --format 'table {{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}' 2>&1 || echo 'docker not available'",
-		Type: "interval", IntervalMin: 15,
+		Type:        "interval", IntervalMin: 15,
 		Category: "monitoring", TimeoutSec: 30,
 	},
 }
@@ -1415,16 +1414,16 @@ func settingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		// Mask the bot token for GET responses
 		resp := struct {
-			TelegramBotToken  string `json:"telegram_bot_token"`
-			TelegramChatID    string `json:"telegram_chat_id"`
-			TelegramOnSuccess bool   `json:"telegram_on_success"`
-			TelegramOnFailure bool   `json:"telegram_on_failure"`
-			TelegramConfigured bool  `json:"telegram_configured"`
+			TelegramBotToken   string `json:"telegram_bot_token"`
+			TelegramChatID     string `json:"telegram_chat_id"`
+			TelegramOnSuccess  bool   `json:"telegram_on_success"`
+			TelegramOnFailure  bool   `json:"telegram_on_failure"`
+			TelegramConfigured bool   `json:"telegram_configured"`
 		}{
-			TelegramBotToken:  maskToken(s.TelegramBotToken),
-			TelegramChatID:    s.TelegramChatID,
-			TelegramOnSuccess: s.TelegramOnSuccess,
-			TelegramOnFailure: s.TelegramOnFailure,
+			TelegramBotToken:   maskToken(s.TelegramBotToken),
+			TelegramChatID:     s.TelegramChatID,
+			TelegramOnSuccess:  s.TelegramOnSuccess,
+			TelegramOnFailure:  s.TelegramOnFailure,
 			TelegramConfigured: s.TelegramBotToken != "" && s.TelegramChatID != "",
 		}
 		jsonResponse(w)
@@ -1528,7 +1527,7 @@ func getTelegramNotifyConfig() *notify.Config {
 }
 
 func scheduleCronNext(t *Task) {
-	next := cronNext(t.CronExpr, time.Now())
+	next := cronpkg.Next(t.CronExpr, time.Now())
 	if next.IsZero() {
 		return
 	}
@@ -1543,143 +1542,4 @@ func scheduleCronNext(t *Task) {
 			scheduleCronNext(t)
 		}
 	})
-}
-
-func cronNext(expr string, from time.Time) time.Time {
-	f := strings.Fields(expr)
-	if len(f) != 5 {
-		return time.Time{}
-	}
-	minSet := parseCronField(f[0], 0, 59, false)
-	hourSet := parseCronField(f[1], 0, 23, false)
-	domSet := parseCronField(f[2], 1, 31, false)
-	monSet := parseCronField(f[3], 1, 12, false)
-	dowSet := parseCronField(f[4], 0, 6, true)
-	d := from.Truncate(time.Minute).Add(time.Minute)
-	deadline := d.Add(366 * 24 * time.Hour) // search up to 1 year ahead
-	for d.Before(deadline) {
-		m := d.Minute()
-		h := d.Hour()
-		dom := d.Day()
-		mon := int(d.Month())
-		dow := int(d.Weekday())
-		if dow == 0 && dowSet.has7 {
-			dow = 7
-		}
-		minuteOk := minSet.set[m]
-		hourOk := hourSet.set[h]
-		monthOk := monSet.set[mon]
-		domOk := domSet.set[dom]
-		dowOk := dowSet.set[dow]
-		var dayOk bool
-		switch {
-		case domSet.isAll && dowSet.isAll:
-			dayOk = true
-		case domSet.isAll:
-			dayOk = dowOk
-		case dowSet.isAll:
-			dayOk = domOk
-		default:
-			dayOk = domOk || dowOk
-		}
-		if minuteOk && hourOk && monthOk && dayOk {
-			return d
-		}
-		d = d.Add(time.Minute)
-	}
-	return time.Time{}
-}
-
-type cronField struct {
-	set   map[int]bool
-	isAll bool
-	has7  bool
-}
-
-func parseCronField(expr string, min, max int, isDow bool) cronField {
-	cf := cronField{set: map[int]bool{}}
-	tokens := strings.Split(strings.ToLower(strings.TrimSpace(expr)), ",")
-	addRange := func(a, b, step int) {
-		if step <= 0 {
-			step = 1
-		}
-		for v := a; v <= b; v += step {
-			cf.set[v] = true
-		}
-	}
-	aliases := map[string]int{"sun": 0, "mon": 1, "tue": 2, "wed": 3, "thu": 4, "fri": 5, "sat": 6}
-	for _, tok := range tokens {
-		tok = strings.TrimSpace(tok)
-		if tok == "*" {
-			cf.isAll = true
-			addRange(min, max, 1)
-			continue
-		}
-		if strings.HasPrefix(tok, "*/") {
-			step, err := strconv.Atoi(strings.TrimPrefix(tok, "*/"))
-			if err != nil || step <= 0 {
-				log.Printf("[cron] Invalid cron step %q, skipping", tok)
-				continue
-			}
-			cf.isAll = true
-			addRange(min, max, step)
-			continue
-		}
-		if isDow {
-			if v, ok := aliases[tok]; ok {
-				cf.set[v] = true
-				continue
-			}
-		}
-		if strings.Contains(tok, "-") {
-			parts := strings.Split(tok, "-")
-			a, errA := strconv.Atoi(parts[0])
-			bPart := parts[1]
-			step := 1
-			if strings.Contains(bPart, "/") {
-				sub := strings.Split(bPart, "/")
-				bPart = sub[0]
-				s, errS := strconv.Atoi(sub[1])
-				if errS != nil || s <= 0 {
-					log.Printf("[cron] Invalid cron range step %q, skipping", tok)
-					continue
-				}
-				step = s
-			}
-			b, errB := strconv.Atoi(bPart)
-			if errA != nil || errB != nil {
-				log.Printf("[cron] Invalid cron range %q, skipping", tok)
-				continue
-			}
-			if isDow && b == 7 {
-				cf.has7 = true
-			}
-			addRange(int(math.Max(float64(min), float64(a))), int(math.Min(float64(max), float64(b))), step)
-			continue
-		}
-		if strings.Contains(tok, "/") {
-			parts := strings.Split(tok, "/")
-			if parts[0] == "*" {
-				step, err := strconv.Atoi(parts[1])
-				if err != nil || step <= 0 {
-					log.Printf("[cron] Invalid cron step %q, skipping", tok)
-					continue
-				}
-				addRange(min, max, step)
-				continue
-			}
-		}
-		v, err := strconv.Atoi(tok)
-		if err != nil {
-			log.Printf("[cron] Invalid cron token %q, skipping", tok)
-			continue
-		}
-		if isDow && v == 7 {
-			cf.has7 = true
-		}
-		if v >= min && v <= max {
-			cf.set[v] = true
-		}
-	}
-	return cf
 }
