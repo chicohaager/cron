@@ -161,6 +161,7 @@ func recordSkip(t *Task, code string) {
 	appendLogLocked(t, LogEntry{Time: time.Now().UnixMilli(), Success: false, Code: code})
 	mu.Unlock()
 	persistTask(t)
+	persistLogs(t)
 }
 
 // appendLogLocked prepends an entry and enforces the per-task cap. Caller holds mu.
@@ -287,6 +288,7 @@ func runTaskOnce(t *Task) {
 		sendNotifications(snap, result, durationMs)
 	}
 	persistTask(t)
+	persistLogs(t)
 }
 
 // classify turns the process outcome into a Result. On success only stdout
@@ -371,12 +373,36 @@ func persistTask(t *Task) {
 	}
 }
 
-// persistDelete removes a task from storage (best-effort, logs errors).
+// persistLogs writes the task's run history to its own file, with the same
+// deleted-task guard as persistTask.
+func persistLogs(t *Task) {
+	if store == nil {
+		return
+	}
+	mu.RLock()
+	live := isRegisteredLocked(t)
+	var data []storage.LogEntryData
+	if live {
+		data = logsToData(t.logs)
+	}
+	mu.RUnlock()
+	if !live {
+		return
+	}
+	if err := store.SaveLogs(t.ID, data); err != nil {
+		log.Printf("[cron] Error persisting logs of %s: %v", t.ID, err)
+	}
+}
+
+// persistDelete removes a task and its history from storage (best-effort).
 func persistDelete(id string) {
 	if store == nil {
 		return
 	}
 	if err := store.DeleteTask(id); err != nil {
 		log.Printf("[cron] Error deleting task %s from storage: %v", id, err)
+	}
+	if err := store.DeleteLogs(id); err != nil {
+		log.Printf("[cron] Error deleting logs of %s: %v", id, err)
 	}
 }
