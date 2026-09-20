@@ -295,3 +295,39 @@ func TestOverflowingIntervalDoesNotWedgeTheServer(t *testing.T) {
 		t.Fatalf("rejected task was inserted: %d tasks", n)
 	}
 }
+
+// A 0.2.0 export is a bare task array with Go's nanosecond Duration under
+// "interval_ms" and no "interval_min"; the tester (2026-09-20) saw every
+// interval task of such a file refused while cron tasks imported fine.
+func TestImportAcceptsPre03Export(t *testing.T) {
+	srv := newTestServer(t)
+	body := `[{"id":"abc","name":"every30","command":"true","type":"interval","interval_ms":1800000000000,"cron_expr":"","status":"running"},
+	          {"id":"def","name":"daily","command":"true","type":"interval","interval_ms":86400000000000,"status":"paused"},
+	          {"id":"ghi","name":"cronny","command":"true","type":"cron","interval_ms":0,"cron_expr":"*/5 * * * *","status":"running"}]`
+	_, raw := call(t, srv, http.MethodPost, "/cron/import", body)
+	var result struct {
+		Imported int
+		Skipped  []struct{ Name, Reason, Code string }
+	}
+	decode(t, raw, &result)
+	if result.Imported != 3 || len(result.Skipped) != 0 {
+		t.Fatalf("result %+v", result)
+	}
+	_, raw = call(t, srv, http.MethodGet, "/cron/tasks", nil)
+	var list []taskView
+	decode(t, raw, &list)
+	got := map[string]int{}
+	for _, v := range list {
+		got[v.Name] = v.IntervalMin
+	}
+	if got["every30"] != 30 || got["daily"] != 1440 {
+		t.Errorf("intervals = %v, want every30=30 daily=1440", got)
+	}
+	// a 0.3 task list (real milliseconds, interval_min present) must not be misread
+	body = `[{"name":"ms","command":"true","type":"interval","interval_min":15,"interval_ms":900000}]`
+	_, raw = call(t, srv, http.MethodPost, "/cron/import", body)
+	decode(t, raw, &result)
+	if result.Imported != 1 {
+		t.Fatalf("0.3 list: %+v", result)
+	}
+}
