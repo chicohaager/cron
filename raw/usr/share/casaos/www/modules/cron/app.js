@@ -62,19 +62,47 @@ class ApiError extends Error {
 }
 
 // The gateway forwards module calls without the session token, so it is
-// attached here from the shell's localStorage. 401 surfaces as a banner
-// telling the user to reload ZimaOS (the shell refreshes the token).
-async function api(path, opts = {}) {
+// attached here from the shell's localStorage. A 401 first goes through the
+// shell's own refresh endpoint (measured on v1.7.1: POST /v1/users/refresh
+// with {refresh_token} → data.{access_token,refresh_token,expires_at}, the
+// same three keys the shell keeps in localStorage) and the call is retried
+// once; only when that fails does the banner ask for a reload.
+async function api(path, opts = {}, retried = false) {
   const headers = { Accept: 'application/json', ...(opts.headers || {}) };
   if (opts.body !== undefined && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
   const token = safeGet('access_token');
   if (token) headers.Authorization = `Bearer ${token}`;
   const res = await fetch(API_BASE + path, { ...opts, headers, body: opts.body !== undefined && typeof opts.body !== 'string' ? JSON.stringify(opts.body) : opts.body });
+  if (res.status === 401 && !retried && await refreshSession()) return api(path, opts, true);
   if (res.status === 204) return null;
   const isJson = (res.headers.get('content-type') || '').includes('application/json');
   const data = isJson ? await res.json().catch(() => ({})) : await res.text();
   if (!res.ok) throw new ApiError(res.status, (data && data.code) || 'http', (data && data.error) || `HTTP ${res.status}`);
   return data;
+}
+
+let refreshing = null;
+function refreshSession() {
+  if (refreshing) return refreshing; // parallel calls share one renewal
+  refreshing = (async () => {
+    const rt = safeGet('refresh_token');
+    if (!rt) return false;
+    try {
+      const res = await fetch('/v1/users/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: rt }) });
+      const body = res.ok ? await res.json() : null;
+      const d = body && body.data;
+      if (!d || !d.access_token) return false;
+      safeSet('access_token', d.access_token);
+      if (d.refresh_token) safeSet('refresh_token', d.refresh_token);
+      if (d.expires_at !== undefined) safeSet('expires_at', String(d.expires_at));
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setTimeout(() => { refreshing = null; }, 0);
+    }
+  })();
+  return refreshing;
 }
 
 function describeError(err) {
@@ -166,11 +194,21 @@ function fillSelect(sel, values, allLabel) {
 }
 
 function scheduleLabel(task) {
-  if (task.type === 'cron') return `<code>${esc(task.cron_expr)}</code>`;
-  const m = task.interval_min;
-  if (m % 1440 === 0) return m === 1440 ? t('schedule.everyDay') : t('schedule.everyDays', { n: m / 1440 });
-  if (m % 60 === 0) return m === 60 ? t('schedule.everyHour') : t('schedule.everyHours', { n: m / 60 });
-  return t('schedule.everyMin', { n: m });
+  const f = formOf(task);
+  const time = () => `${pad2(f.hour)}:${pad2(f.minute)}`;
+  switch (f.kind) {
+    case 'daily': return t('sched.words.daily', { time: time() });
+    case 'weekly': return t('sched.words.weekly', { day: t(`day.${f.weekday}`), time: time() });
+    case 'monthly': return t('sched.words.monthly', { day: f.day, time: time() });
+    case 'hourly': return f.minute ? t('sched.words.hourlyAt', { minute: pad2(f.minute) }) : t('sched.words.hourly');
+    case 'minutes': {
+      const m = f.every;
+      if (m % 1440 === 0) return m === 1440 ? t('schedule.everyDay') : t('schedule.everyDays', { n: m / 1440 });
+      if (m % 60 === 0) return m === 60 ? t('schedule.everyHour') : t('schedule.everyHours', { n: m / 60 });
+      return t('schedule.everyMin', { n: m });
+    }
+    default: return `<code>${esc(f.expr)}</code>`;
+  }
 }
 
 function statusPill(task) {
@@ -335,8 +373,9 @@ async function onLogAction(task, action) {
 /* ---------- task form ---------- */
 
 const form = {
-  name: () => $('#nameInput'), command: () => $('#commandInput'), type: () => $('#typeSelect'),
+  name: () => $('#nameInput'), command: () => $('#commandInput'), kind: () => $('#scheduleKind'),
   interval: () => $('#intervalInput'), cron: () => $('#cronInput'), category: () => $('#categoryInput'),
+  schedTime: () => $('#schedTime'), schedWeekday: () => $('#schedWeekday'), schedDay: () => $('#schedDay'), schedMinute: () => $('#schedMinute'),
   priority: () => $('#priorityInput'), tags: () => $('#tagsInput'), timeout: () => $('#timeoutInput'),
   maxLogs: () => $('#maxLogsInput'), retryCount: () => $('#retryCountInput'), retryDelay: () => $('#retryDelayInput'),
   depends: () => $('#dependsSelect'), allowParallel: () => $('#allowParallelCheck'),
@@ -375,7 +414,8 @@ function resetForm() {
     else if (el.multiple) Array.from(el.options).forEach((o) => { o.selected = false; });
     else el.value = '';
   });
-  form.type().value = 'interval';
+  fillSchedule({ type: 'cron', cron_expr: '0 3 * * *' });
+  validateSchedule();
   form.webhookFormat().value = 'generic';
   form.webhookOnFailure().checked = true;
   form.emailOnFailure().checked = true;
@@ -402,8 +442,8 @@ function openTaskForm(task) {
 function fillForm(task) {
   form.name().value = task.name;
   form.command().value = task.command;
-  form.type().value = task.type;
-  if (task.type === 'interval') form.interval().value = task.interval_min; else { form.cron().value = task.cron_expr; validateCron(); }
+  fillSchedule(task);
+  validateSchedule();
   form.category().value = task.category || '';
   form.priority().value = task.priority || '';
   form.tags().value = (task.tags || []).join(', ');
@@ -428,9 +468,57 @@ function fillForm(task) {
 }
 
 function updateScheduleFields() {
-  const cron = form.type().value === 'cron';
-  $('#intervalField').hidden = cron;
-  $('#cronField').hidden = !cron;
+  const kind = form.kind().value;
+  $$('[data-sched]').forEach((el) => { el.hidden = !el.dataset.sched.split(' ').includes(kind); });
+}
+
+/* ----- schedule as words (mirrors schedule.Form in lintux-modkit) ----- */
+
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// scheduleFromForm renders the picked words as the API's {type,
+// interval_min, cron_expr}; "every N minutes" is the interval type.
+function scheduleFromForm() {
+  const kind = form.kind().value;
+  const [hh, mm] = (form.schedTime().value || '03:00').split(':').map(Number);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number(v) || lo));
+  switch (kind) {
+    case 'daily': return { type: 'cron', cron_expr: `${mm} ${hh} * * *` };
+    case 'weekly': return { type: 'cron', cron_expr: `${mm} ${hh} * * ${Number(form.schedWeekday().value)}` };
+    case 'monthly': return { type: 'cron', cron_expr: `${mm} ${hh} ${clamp(form.schedDay().value, 1, 28)} * *` };
+    case 'hourly': return { type: 'cron', cron_expr: `${clamp(form.schedMinute().value, 0, 59)} * * * *` };
+    case 'minutes': return { type: 'interval', interval_min: parseInt(form.interval().value, 10) || 0 };
+    default: return { type: 'cron', cron_expr: form.cron().value.trim() };
+  }
+}
+
+// formOf reads a task's schedule back into words. Strict: a bare number in
+// each field, nothing else — what the form cannot say stays an expression.
+function formOf(task) {
+  if (task.type === 'interval') return { kind: 'minutes', every: task.interval_min || 0 };
+  const f = (task.cron_expr || '').trim().split(/\s+/);
+  const num = (x, lo, hi) => (/^\d+$/.test(x) && Number(x) >= lo && Number(x) <= hi ? Number(x) : null);
+  if (f.length === 5) {
+    const [mi, ho, dom, dow] = [num(f[0], 0, 59), num(f[1], 0, 23), num(f[2], 1, 28), num(f[4], 0, 7)];
+    const star = (x) => x === '*';
+    if (mi !== null && ho !== null && star(f[2]) && star(f[3]) && star(f[4])) return { kind: 'daily', hour: ho, minute: mi };
+    if (mi !== null && ho !== null && star(f[2]) && star(f[3]) && dow !== null) return { kind: 'weekly', hour: ho, minute: mi, weekday: dow % 7 };
+    if (mi !== null && ho !== null && dom !== null && star(f[3]) && star(f[4])) return { kind: 'monthly', hour: ho, minute: mi, day: dom };
+    if (mi !== null && star(f[1]) && star(f[2]) && star(f[3]) && star(f[4])) return { kind: 'hourly', minute: mi };
+  }
+  return { kind: 'cron', expr: task.cron_expr || '' };
+}
+
+function fillSchedule(task) {
+  const f = formOf(task);
+  form.kind().value = f.kind;
+  form.schedTime().value = `${pad2(f.hour ?? 3)}:${pad2(f.minute ?? 0)}`;
+  form.schedWeekday().value = String(f.weekday ?? 0);
+  form.schedDay().value = f.day ?? 1;
+  form.schedMinute().value = f.kind === 'hourly' ? f.minute : 0;
+  form.interval().value = f.kind === 'minutes' ? (f.every || '') : '';
+  form.cron().value = f.kind === 'cron' ? f.expr : (task.cron_expr || '0 3 * * *');
+  updateScheduleFields();
 }
 
 function addEnvRow(key = '', value = '') {
@@ -448,9 +536,7 @@ function readForm() {
   const req = {
     name: form.name().value.trim(),
     command: form.command().value.trim(),
-    type: form.type().value,
-    interval_min: num(form.interval()),
-    cron_expr: form.cron().value.trim(),
+    ...scheduleFromForm(),
     timeout_sec: num(form.timeout()),
     retry_count: num(form.retryCount()),
     retry_delay_sec: num(form.retryDelay()),
@@ -499,24 +585,25 @@ function applyTemplate() {
   form.command().value = tpl.command;
   form.category().value = tpl.category || '';
   form.timeout().value = tpl.timeout_sec || '';
-  form.type().value = tpl.type;
-  updateScheduleFields();
-  if (tpl.type === 'interval') form.interval().value = tpl.interval_min || '';
-  else { form.cron().value = tpl.cron_expr || ''; validateCron(); }
+  fillSchedule(tpl);
+  validateSchedule();
 }
 
 let cronTimer = null;
-function validateCron() {
-  const expr = form.cron().value.trim();
+// validateSchedule shows the next runs for every list shape (they are all
+// cron expressions underneath) and the validator's verdict for a typed one.
+function validateSchedule() {
+  const sch = scheduleFromForm();
   const fb = $('#cronFeedback');
   clearTimeout(cronTimer);
-  if (!expr) { fb.textContent = ''; fb.className = 'cron-feedback'; return; }
+  if (sch.type !== 'cron' || !sch.cron_expr) { fb.textContent = ''; fb.className = 'cron-feedback'; return; }
+  const typed = form.kind().value === 'cron';
   cronTimer = setTimeout(async () => {
     try {
-      const d = await api('/cron/validate', { method: 'POST', body: { expr } });
+      const d = await api('/cron/validate', { method: 'POST', body: { expr: sch.cron_expr } });
       if (d.valid) {
         fb.className = 'cron-feedback ok';
-        fb.innerHTML = `✓ ${t('form.cronValid')}<div class="next">${t('form.nextRuns')} ${d.next_runs.map(fmtTime).join(' · ')}</div>`;
+        fb.innerHTML = `${typed ? `✓ ${t('form.cronValid')}` : ''}<div class="next">${t('form.nextRuns')} ${d.next_runs.slice(0, 3).map(fmtTime).join(' · ')}</div>`;
       } else {
         fb.className = 'cron-feedback bad';
         fb.innerHTML = `✗ ${t('form.cronInvalid')}${d.errors.map((e) => `<div>${esc(e.field)}: ${esc(e.message)}</div>`).join('')}`;
@@ -658,8 +745,8 @@ function init() {
   $('#taskCancelBtn').addEventListener('click', () => { $('#taskModal').hidden = true; });
   $('#taskSaveBtn').addEventListener('click', saveTask);
   $('#templateSelect').addEventListener('change', applyTemplate);
-  $('#typeSelect').addEventListener('change', updateScheduleFields);
-  $('#cronInput').addEventListener('input', validateCron);
+  $('#scheduleKind').addEventListener('change', () => { updateScheduleFields(); validateSchedule(); });
+  ['#schedTime', '#schedWeekday', '#schedDay', '#schedMinute', '#cronInput'].forEach((sel) => { $(sel).addEventListener('input', validateSchedule); $(sel).addEventListener('change', validateSchedule); });
   $('#addEnvBtn').addEventListener('click', () => addEnvRow());
   $('#runAllBtn').addEventListener('click', runAll);
   $('#taskBody').addEventListener('click', onTableClick);

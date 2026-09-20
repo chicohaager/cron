@@ -148,6 +148,10 @@ input, select, textarea {
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
 select.compact, input.compact { width: auto; padding: 6px 10px; }
+.sched-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.sched-row select:first-child { flex: 1 1 200px; }
+.sched-row .compact { min-width: 90px; }
+.sched-row #cronInput { flex: 1 1 200px; }
 textarea { font-family: var(--font-mono); font-size: 12.5px; resize: vertical; min-height: 72px; }
 input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 

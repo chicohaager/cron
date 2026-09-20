@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/chicohaager/cron/internal/storage"
@@ -163,7 +164,12 @@ func isScheduled(t *Task) bool {
 func recordSkip(t *Task, code string) {
 	log.Printf("[cron] Task %s skipped: %s", t.ID, code)
 	mu.Lock()
-	t.LastResult = &Result{Success: false, Code: code}
+	// a tick skipped because the previous run is still going is worth a log
+	// line, but the task's result stays the one the running attempt will
+	// write — otherwise the list shows "skipped" while the task executes
+	if code != codeSkippedRunning {
+		t.LastResult = &Result{Success: false, Code: code}
+	}
 	appendLogLocked(t, LogEntry{Time: time.Now().UnixMilli(), Success: false, Code: code})
 	mu.Unlock()
 	persistTask(t)
@@ -261,6 +267,13 @@ func runTaskOnce(t *Task) {
 	ctx, cancel := context.WithTimeout(context.Background(), snap.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-lc", snap.command)
+	// the timeout must take the shell's children with it: a command like
+	// "rsync …" or "sleep 30" is a child of /bin/sh, and killing only the
+	// shell leaves it running with the output pipes open, so Wait would
+	// block until it ends by itself
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 5 * time.Second
 	if len(snap.env) > 0 {
 		cmd.Env = os.Environ()
 		for k, v := range snap.env {
@@ -364,17 +377,15 @@ func persistTask(t *Task) {
 	if store == nil {
 		return
 	}
+	// the registry check and the save happen under one read lock: a DELETE
+	// in between would otherwise let the save re-create the task on disk
+	// (deleteTask takes the write lock and removes the file entry inside it)
 	mu.RLock()
-	live := isRegisteredLocked(t)
-	var td *storage.TaskData
-	if live {
-		td = taskToData(t)
-	}
-	mu.RUnlock()
-	if !live {
+	defer mu.RUnlock()
+	if !isRegisteredLocked(t) {
 		return
 	}
-	if err := store.SaveTask(td); err != nil {
+	if err := store.SaveTask(taskToData(t)); err != nil {
 		log.Printf("[cron] Error persisting task %s: %v", t.ID, err)
 	}
 }
