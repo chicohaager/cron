@@ -431,9 +431,31 @@ func exportHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// importHandler accepts the export envelope or a bare task array. Imported
-// tasks start paused and are created one by one; anything rejected is named
-// in the response instead of being dropped silently.
+// importEntry is a taskRequest plus the one field older files carry instead
+// of interval_min: a 0.2 export (and a copied 0.3 task list) has
+// "interval_ms". 0.2 wrote Go's nanosecond Duration under that name, 0.3
+// writes real milliseconds; a value above one year in milliseconds can only
+// be nanoseconds (one minute is 6e10 ns, one year 3.2e10 ms).
+type importEntry struct {
+	taskRequest
+	IntervalMs int64 `json:"interval_ms,omitempty"`
+}
+
+func (e *importEntry) request() taskRequest {
+	req := e.taskRequest
+	if req.Type == typeInterval && req.IntervalMin == 0 && e.IntervalMs > 0 {
+		d := time.Duration(e.IntervalMs) * time.Millisecond
+		if e.IntervalMs > int64(maxIntervalMin)*int64(time.Minute/time.Millisecond) {
+			d = time.Duration(e.IntervalMs)
+		}
+		req.IntervalMin = int(d / time.Minute)
+	}
+	return req
+}
+
+// importHandler accepts the export envelope, a bare task array, or a 0.2
+// export. Imported tasks start paused and are created one by one; anything
+// rejected is named in the response instead of being dropped silently.
 func importHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
@@ -443,13 +465,19 @@ func importHandler(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &raw) {
 		return
 	}
-	var incoming []taskRequest
-	var envelope exportFile
+	var entries []importEntry
+	var envelope struct {
+		Tasks []importEntry `json:"tasks"`
+	}
 	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Tasks != nil {
-		incoming = envelope.Tasks
-	} else if err := json.Unmarshal(raw, &incoming); err != nil {
+		entries = envelope.Tasks
+	} else if err := json.Unmarshal(raw, &entries); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_json", "expected an export file or a task array")
 		return
+	}
+	incoming := make([]taskRequest, 0, len(entries))
+	for i := range entries {
+		incoming = append(incoming, entries[i].request())
 	}
 	type skipped struct {
 		Name   string `json:"name"`
