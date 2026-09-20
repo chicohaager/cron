@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	version            = "0.3.0"
+	version            = "0.3.1"
 	defaultStoragePath = "/DATA/AppData/cron"
 	maxRequestBody     = 1 << 20 // 1 MB
 	maxTasks           = 500

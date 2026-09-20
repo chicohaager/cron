@@ -1,11 +1,15 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/chicohaager/cron/internal/storage"
+	"github.com/chicohaager/lintux-modkit/notify"
 )
 
 // newTestStore points the package-level store at a throwaway directory and
@@ -152,7 +156,9 @@ func TestUnregisteredTaskDoesNotRun(t *testing.T) {
 }
 
 // TestOverlapIsSkippedUnlessParallelAllowed pins the semantics of
-// allow_parallel: a tick during a running command is recorded as skipped.
+// allow_parallel: a tick during a running command is logged as skipped,
+// while the task's result stays with the run that is still going (the
+// list showed "skipped" for an executing task before 0.3.1).
 func TestOverlapIsSkippedUnlessParallelAllowed(t *testing.T) {
 	newTestStore(t)
 	task := &Task{ID: "slow", Name: "slow", Type: "interval", Interval: time.Hour,
@@ -165,11 +171,21 @@ func TestOverlapIsSkippedUnlessParallelAllowed(t *testing.T) {
 
 	mu.RLock()
 	last := task.LastResult
+	logged := len(task.logs) > 0 && task.logs[0].Code == codeSkippedRunning
 	mu.RUnlock()
-	if last == nil || last.Code != codeSkippedRunning {
-		t.Fatalf("expected %s, got %+v", codeSkippedRunning, last)
+	if !logged {
+		t.Fatalf("expected a %s log entry, got %+v", codeSkippedRunning, task.logs)
+	}
+	if last != nil && last.Code == codeSkippedRunning {
+		t.Fatalf("the skip must not become the task's result while it executes: %+v", last)
 	}
 	waitFor(t, func() bool { mu.RLock(); defer mu.RUnlock(); return !task.Executing }, 2*time.Second)
+	mu.RLock()
+	last = task.LastResult
+	mu.RUnlock()
+	if last == nil || last.Code != codeCompleted {
+		t.Fatalf("the running attempt's result must win, got %+v", last)
+	}
 
 	// With allow_parallel the second run executes instead of being skipped.
 	task.AllowParallel = true
@@ -231,3 +247,44 @@ func TestCronScheduleRearmsWithSingleTimer(t *testing.T) {
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 func removeFile(p string)      { _ = os.Remove(p) }
+
+// A timeout has to end the shell's children too: "sleep 30" under a 1 s
+// timeout must return within a few seconds and leave no sleep behind.
+func TestTimeoutKillsChildProcesses(t *testing.T) {
+	newTestStore(t)
+	marker := fmt.Sprintf("zuse-%d", time.Now().UnixNano())
+	task := &Task{ID: "kill", Name: "kill", Type: "interval", Interval: time.Hour,
+		Command: "sleep 30 # " + marker, TimeoutSec: 1, Status: "running"}
+	registerTask(t, task)
+	start := time.Now()
+	runTaskOnce(task)
+	if d := time.Since(start); d > 8*time.Second {
+		t.Fatalf("run took %s — the child kept the run alive past the timeout", d)
+	}
+	mu.RLock()
+	last := task.LastResult
+	mu.RUnlock()
+	if last == nil || last.Code != codeTimeout {
+		t.Fatalf("expected %s, got %+v", codeTimeout, last)
+	}
+	out, _ := exec.Command("pgrep", "-f", marker).Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("a child survived the timeout: pids %s", out)
+	}
+}
+
+// A masked SMTP password survives a change of recipient in the same edit.
+func TestMaskedSecretSurvivesRecipientChange(t *testing.T) {
+	existing := []notify.Config{{Type: "email", Target: "old@example.com", SMTPPass: "s3cret"}}
+	incoming := []notify.Config{{Type: "email", Target: "new@example.com", SMTPPass: maskedSecret}}
+	got := mergeCredentials(incoming, existing)
+	if got[0].SMTPPass != "s3cret" {
+		t.Fatalf("password lost on recipient change: %+v", got[0])
+	}
+	// two existing configs of the type and no recipient match: no guess —
+	// the secret is dropped rather than borrowed from another recipient
+	two := append(existing, notify.Config{Type: "email", Target: "other@example.com", SMTPPass: "other"})
+	if got := mergeCredentials([]notify.Config{{Type: "email", Target: "x@example.com", SMTPPass: maskedSecret}}, two); got[0].SMTPPass == "other" || got[0].SMTPPass == "s3cret" {
+		t.Fatalf("ambiguous match must not borrow a secret: %+v", got[0])
+	}
+}

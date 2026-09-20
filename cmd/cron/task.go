@@ -334,11 +334,22 @@ func mergeCredentials(incoming, existing []notify.Config) []notify.Config {
 	return incoming
 }
 
+// findExisting prefers the config with the same recipient; when the user
+// changed the recipient in the same edit, the only config of that type is
+// still the one whose secret the mask stands for.
 func findExisting(existing []notify.Config, typ, target string) notify.Config {
+	var sameType []notify.Config
 	for _, e := range existing {
-		if e.Type == typ && e.Target == target {
+		if e.Type != typ {
+			continue
+		}
+		if e.Target == target {
 			return e
 		}
+		sameType = append(sameType, e)
+	}
+	if len(sameType) == 1 {
+		return sameType[0]
 	}
 	return notify.Config{}
 }
@@ -468,6 +479,11 @@ func loadPersistedTasks() error {
 			t.logs = logsFromData(td.Logs)
 			if err := store.SaveLogs(t.ID, td.Logs); err != nil {
 				log.Printf("[cron] migrate logs of %s: %v", t.ID, err)
+			} else if err := store.SaveTask(taskToData(t)); err != nil {
+				// drop the inline copy right away; otherwise every restart
+				// before the first change would overwrite logs/<id>.json
+				// with the stale inline history
+				log.Printf("[cron] migrate task %s: %v", t.ID, err)
 			}
 		} else if data, err := store.LoadLogs(t.ID); err == nil {
 			t.logs = logsFromData(data)

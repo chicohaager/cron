@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.3.1 — unreleased
+
+### Changed
+- The schedule is picked as words — *Daily at*, *Weekly on*, *Monthly on
+  day*, *Every hour*, *Every N minutes* — and the list shows it the same
+  way (`0 3 * * *` reads "daily at 03:00"). A cron expression is the last
+  entry; expressions the words cannot say (`0 3 * * 1,5`) stay expressions.
+- README: the templates table and a five-click walkthrough are back.
+
+### Fixed
+- Import refused every interval task of a 0.2.x export file
+  (`interval_ms` in nanoseconds, no `interval_min`); such files import
+  completely now.
+- A timeout killed only `/bin/sh`, not the command it had started: a run
+  with `sleep 30` and a 1 s timeout took 30 s. The whole process group is
+  ended now.
+- A tick that arrived while the task was still running set the task's
+  result to "skipped" for the duration of the run; it is a history entry
+  only now, the running attempt's result stands.
+- A DELETE between the registry check and the write in `persistTask`
+  could re-create the deleted task on disk.
+- The inline history of 0.2.x task files was migrated again on every
+  restart until the first change; it is dropped from `tasks.json` right
+  after the migration now.
+- Changing the recipient of an e-mail notification lost the stored SMTP
+  password when the form echoed the mask.
+- The session token is renewed through the shell's refresh endpoint when
+  it expires; the "reload ZimaOS" banner only appears if that fails.
+
 ## 0.3.0 — 2026-09-18
 
 ### Fixed

@@ -12,9 +12,10 @@ ZimaOS Module Store as `zima_cron`.
 
 ## Features
 
-- **Two schedule types** — every N minutes, or a 5-field cron expression
-  (`0 3 * * 1`, `*/15 * * * *`, `0 5 1 jan,jul *`, `mon-fri`, …) with live
-  validation and the next five run times shown while you type.
+- **Schedules in words** — daily at, weekly on, monthly on day, every
+  hour, every N minutes; the next run times appear while you pick. A
+  5-field cron expression (`0 5 1 jan,jul *`, `mon-fri`, …) is there for
+  everything else, with live validation.
 - **Reliable day handling** — weekday and day-of-month fields follow the
   POSIX rule; `*/2` in a day field is a restriction. (Versions before 0.3.0
   ran every weekday-bound task daily — see the changelog.)
@@ -81,15 +82,45 @@ rule, so a weekly task that used to fire daily fires weekly from now on.
 
 ## Usage
 
-Open **Cron** from the dashboard. *New task* opens the form; choose a
-template or fill in name, command and schedule. Commands run as root via
-`/bin/sh -c`, with `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin` on
-the path and the host's timezone.
+### Your first task in five clicks
+
+1. Open **Cron** from the dashboard and click **New task**.
+2. Pick a template — *System Health Check* is a good first one — or type
+   a name and a command. Commands run as root via `/bin/sh -c`, with
+   `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin` on the path and the
+   host's timezone.
+3. Choose **when** from the list: *Daily at 03:00*, *Weekly on Sunday*,
+   *Monthly on day 1*, *Every hour*, *Every N minutes*. The next three run
+   times appear under the field. A cron expression is the last entry,
+   for those who want one.
+4. **Create.** The task is active; **Run** tries it right now.
 
 Per row: **Run** (now), **Edit**, **Pause/Resume**, **History**, **Delete**.
 *Run all now* triggers every active task. The gear opens global settings
 (Telegram). *Export* downloads all tasks as JSON; *Import* reads such a
-file and creates the tasks paused.
+file — from 0.3.x or from 0.2.x — and creates the tasks paused.
+
+### Templates
+
+| Template | What it does |
+|---|---|
+| AppData Backup | Archives `/DATA/AppData` to `/DATA/backups/appdata_<date>.tar.gz` |
+| Cleanup Temp Files | Removes files older than 7 days from `/tmp` |
+| System Health Check | Disk space, memory and load average |
+| Docker Cleanup | Removes unused images, containers and networks — volumes are kept |
+| System Update Check | Prints the ZimaOS release and kernel |
+| SSL Certificate Expiry Check | Certificate expiry of a domain (edit the host) |
+| Docker Container Status | Every container with state and resource usage |
+
+### Schedule examples
+
+| You want | Pick |
+|---|---|
+| a nightly backup | *Daily at* 03:00 |
+| a weekly report on Monday morning | *Weekly on* Monday, 07:00 |
+| a check every quarter hour | *Every N minutes* 15 |
+| the 1st of the month | *Monthly on day* 1, 04:00 |
+| weekdays only, or two times a day | *Cron expression*: `0 6 * * mon-fri`, `0 6,18 * * *` |
 
 ## systemd integration
 

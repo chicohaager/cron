@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title data-i18n="app.title">Cron</title>
-  <link rel="stylesheet" href="styles.css?v=0.3.0">
+  <link rel="stylesheet" href="styles.css?v=0.3.1">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
 </head>
 <body>
@@ -89,19 +89,31 @@
         <span class="hint" data-i18n="form.commandHint">Runs as root via /bin/sh.</span>
       </div>
       <div class="field">
-        <label for="typeSelect" data-i18n="form.scheduleType">Schedule</label>
-        <select id="typeSelect">
-          <option value="interval" data-i18n="form.typeInterval">Interval (minutes)</option>
-          <option value="cron" data-i18n="form.typeCron">Cron expression</option>
-        </select>
-      </div>
-      <div class="field" id="intervalField">
-        <label for="intervalInput" data-i18n="form.interval">Every N minutes</label>
-        <input id="intervalInput" type="number" min="1" max="527040" step="1" data-i18n-ph="form.intervalPh">
-      </div>
-      <div class="field" id="cronField" hidden>
-        <label for="cronInput" data-i18n="form.cron">Cron expression</label>
-        <input id="cronInput" type="text" class="mono" data-i18n-ph="form.cronPh" autocomplete="off" spellcheck="false">
+        <label for="scheduleKind" data-i18n="form.scheduleType">Schedule</label>
+        <div class="sched-row">
+          <select id="scheduleKind">
+            <option value="daily" data-i18n="sched.daily">Daily at</option>
+            <option value="weekly" data-i18n="sched.weekly">Weekly on</option>
+            <option value="monthly" data-i18n="sched.monthly">Monthly on day</option>
+            <option value="hourly" data-i18n="sched.hourly">Every hour, at minute</option>
+            <option value="minutes" data-i18n="sched.minutes">Every N minutes</option>
+            <option value="cron" data-i18n="sched.cron">Cron expression (experts)</option>
+          </select>
+          <select id="schedWeekday" class="compact" data-sched="weekly">
+            <option value="0" data-i18n="day.0">Sunday</option>
+            <option value="1" data-i18n="day.1">Monday</option>
+            <option value="2" data-i18n="day.2">Tuesday</option>
+            <option value="3" data-i18n="day.3">Wednesday</option>
+            <option value="4" data-i18n="day.4">Thursday</option>
+            <option value="5" data-i18n="day.5">Friday</option>
+            <option value="6" data-i18n="day.6">Saturday</option>
+          </select>
+          <input id="schedDay" type="number" min="1" max="28" value="1" class="compact" data-sched="monthly">
+          <input id="schedTime" type="time" value="03:00" class="compact" data-sched="daily weekly monthly">
+          <input id="schedMinute" type="number" min="0" max="59" value="0" class="compact" data-sched="hourly">
+          <input id="intervalInput" type="number" min="1" max="527040" step="1" class="compact" data-i18n-ph="form.intervalPh" data-sched="minutes">
+          <input id="cronInput" type="text" class="mono" data-i18n-ph="form.cronPh" autocomplete="off" spellcheck="false" data-sched="cron">
+        </div>
         <div id="cronFeedback" class="cron-feedback"></div>
       </div>
       <div class="grid-2">
@@ -262,7 +274,7 @@
   </div>
 </div>
 
-<script src="i18n.js?v=0.3.0"></script>
-<script src="app.js?v=0.3.0"></script>
+<script src="i18n.js?v=0.3.1"></script>
+<script src="app.js?v=0.3.1"></script>
 </body>
 </html>
