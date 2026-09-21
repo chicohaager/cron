@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2 — unreleased
+
+### Added
+- A read-only card **Sync & Backup** below the tasks, when that module is
+  installed: name, backup or sync, schedule in words, next run and last
+  result of every job, fetched from `/v2/zbackup/api/jobs` with the
+  shell's session (measured on ZimaOS 1.7.1: 200 with the token, 401
+  without, 404 when the module is absent — then the card stays hidden; a
+  module that answers an error shows the error in the card). *Open Sync &
+  Backup* links to the module; Cron does not start, edit or run those
+  jobs — the module keeps its own scheduler, so no job exists twice.
+
 ## 0.3.1 — unreleased
 
 ### Changed
