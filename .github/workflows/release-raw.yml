@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
       - run: go vet ./...
       - run: go test -race ./...
       - name: i18n keys must be complete in every language
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
       - run: sudo apt-get update && sudo apt-get install -y squashfs-tools
       - run: ./build.sh ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
