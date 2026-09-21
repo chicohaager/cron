@@ -11,6 +11,7 @@
   module that answers an error shows the error in the card). *Open Sync &
   Backup* links to the module; Cron does not start, edit or run those
   jobs — the module keeps its own scheduler, so no job exists twice.
+- Spanish as the fifth UI language (all 198 strings).
 
 ## 0.3.1 — unreleased
 

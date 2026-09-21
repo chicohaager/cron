@@ -13,7 +13,7 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 /* ---------- i18n ---------- */
 
 const LANGS = window.CRON_I18N || {};
-const SHELL_LANG_MAP = { en: 'en', de: 'de', fr: 'fr', zh: 'zh' };
+const SHELL_LANG_MAP = { en: 'en', de: 'de', fr: 'fr', es: 'es', zh: 'zh' };
 let lang = 'en';
 
 // The ZimaOS shell keeps the UI language in localStorage.lang as "fr_FR",
@@ -167,6 +167,9 @@ function render() {
   renderStats();
   renderFilters();
   renderTable();
+  // the Sync & Backup card carries translated words too (kind, schedule,
+  // result), so a language switch redraws it from the last answer
+  if (Array.isArray(state.backupJobs)) renderBackupJobs();
 }
 
 /* ---------- Sync & Backup jobs, read-only ----------
