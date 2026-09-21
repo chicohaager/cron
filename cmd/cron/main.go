@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	version            = "0.3.2-dev3"
+	version            = "0.3.2"
 	defaultStoragePath = "/DATA/AppData/cron"
 	defaultRuntimePath = "/var/run/casaos" // where ZimaOS' gateway announces itself (management.url)
 	maxRequestBody     = 1 << 20           // 1 MB
