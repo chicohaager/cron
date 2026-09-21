@@ -52,6 +52,15 @@ def main():
     if unknown:
         problems += 1
         print(f"[ui] keys used but not translated: {sorted(unknown)}")
+    # the other direction: a translated key nobody asks for is ballast that
+    # every language carries; keys built at runtime (t(`result.${x}`)) are
+    # exempt by prefix, everything else must appear literally somewhere
+    js_html = (WEB / "app.js").read_text(encoding="utf-8") + (WEB / "index.html").read_text(encoding="utf-8")
+    dyn = set(re.findall(r"t\(`([a-zA-Z.]+)\$\{", js_html)) | set(re.findall(r"LANGS\.en\[`([a-zA-Z.]+)\$\{", js_html))
+    unused = [k for k in reference if f"'{k}'" not in js_html and f'"{k}"' not in js_html and not any(k.startswith(d) for d in dyn)]
+    if unused:
+        problems += 1
+        print(f"[ui] translated but never used: {sorted(unused)}")
     print(f"languages: {', '.join(f'{l}={len(k)}' for l, k in langs.items())}; keys used in UI: {len(used)}")
     return 1 if problems else 0
 

@@ -14,10 +14,9 @@ import (
 	"syscall"
 	"time"
 
-	conf "github.com/chicohaager/cron/internal/config"
-	svc "github.com/chicohaager/cron/internal/service"
 	"github.com/chicohaager/cron/internal/storage"
 	"github.com/chicohaager/lintux-modkit/auth"
+	"github.com/chicohaager/lintux-modkit/gateway"
 	"github.com/chicohaager/lintux-modkit/httpx"
 	"github.com/chicohaager/lintux-modkit/notify"
 	"github.com/chicohaager/lintux-modkit/watchdog"
@@ -26,7 +25,8 @@ import (
 const (
 	version            = "0.3.2"
 	defaultStoragePath = "/DATA/AppData/cron"
-	maxRequestBody     = 1 << 20 // 1 MB
+	defaultRuntimePath = "/var/run/casaos" // where ZimaOS' gateway announces itself (management.url)
+	maxRequestBody     = 1 << 20           // 1 MB
 	maxTasks           = 500
 	maxConcurrentRuns  = 10
 	storageAttempts    = 30 // /DATA is a late bind mount on ZimaOS; wait for it
@@ -53,7 +53,7 @@ func main() {
 		log.Printf("[cron] Warning: failed to load tasks: %v", err)
 	}
 
-	runtimePath := conf.CommonInfo.RuntimePath
+	runtimePath := defaultRuntimePath
 	if envPath := os.Getenv("CASAOS_RUNTIME_PATH"); envPath != "" {
 		runtimePath = envPath
 	}
@@ -66,7 +66,7 @@ func main() {
 
 	// The route is registered in the background so the server is up even
 	// while the gateway is still starting (it needs ~45 s after boot).
-	svc.RegisterRouteAsync(runtimePath, routePrefix, "http://"+listener.Addr().String())
+	go registerRoute(runtimePath, routePrefix, "http://"+listener.Addr().String())
 
 	verifier := newVerifier(runtimePath)
 	srv := &http.Server{
@@ -126,4 +126,21 @@ func shutdownOnSignal(srv *http.Server) {
 	if err := srv.Shutdown(ctx); err != nil {
 		log.Printf("[cron] shutdown: %v", err)
 	}
+}
+
+// registerRoute tells the gateway where we listen. It runs in the
+// background so the server is up while the gateway is still starting
+// (measured after a reboot of a 1.7.1 box: ~45 s), and retries for two
+// minutes because a route posted before the gateway listens is lost.
+func registerRoute(runtimePath, path, target string) {
+	for i := 1; i <= 60; i++ {
+		err := gateway.Register(context.Background(), runtimePath, path, target, 10*time.Second)
+		if err == nil {
+			log.Printf("[cron] Gateway route registered: %s -> %s", path, target)
+			return
+		}
+		log.Printf("[cron] Gateway not ready (attempt %d/60): %v", i, err)
+		time.Sleep(2 * time.Second)
+	}
+	log.Printf("[cron] WARNING: Could not register gateway route after 60 attempts (2 min)")
 }
