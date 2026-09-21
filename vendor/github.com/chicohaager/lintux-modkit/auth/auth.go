@@ -246,10 +246,16 @@ func p256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
 	if len(x) > size || len(y) > size {
 		return nil, errors.New("coordinate longer than the curve size")
 	}
-	curve := elliptic.P256()
-	pub := &ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
-	if !curve.IsOnCurve(pub.X, pub.Y) {
-		return nil, errors.New("point is not on P-256")
+	// uncompressed SEC 1 point: 0x04 || X || Y, each left-padded to 32 bytes;
+	// the parser does the on-curve check (the X/Y fields and IsOnCurve are
+	// deprecated since Go 1.25/1.26)
+	point := make([]byte, 1+2*size)
+	point[0] = 4
+	copy(point[1+size-len(x):], x)
+	copy(point[1+2*size-len(y):], y)
+	pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), point)
+	if err != nil {
+		return nil, fmt.Errorf("point is not on P-256: %w", err)
 	}
 	return pub, nil
 }
