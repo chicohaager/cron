@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.3.2 — unreleased
+## 0.3.2 — 2026-09-21
+
+0.3.1 was built and tested on a box but never published; its changes ship
+here.
 
 ### Added
 - A read-only card **Sync & Backup** below the tasks, when that module is
@@ -11,15 +14,18 @@
   module that answers an error shows the error in the card). *Open Sync &
   Backup* links to the module; Cron does not start, edit or run those
   jobs — the module keeps its own scheduler, so no job exists twice.
-- Spanish as the fifth UI language (all 198 strings).
-
-## 0.3.1 — unreleased
+- Spanish as the fifth UI language (all 198 strings, drafted by a
+  non-native speaker — corrections welcome).
 
 ### Changed
 - The schedule is picked as words — *Daily at*, *Weekly on*, *Monthly on
   day*, *Every hour*, *Every N minutes* — and the list shows it the same
   way (`0 3 * * *` reads "daily at 03:00"). A cron expression is the last
   entry; expressions the words cannot say (`0 3 * * 1,5`) stay expressions.
+- Built with Go 1.26.8 (govulncheck: no known issues; the 0.3.0 binary,
+  built with Go 1.22.2, carried 42 known standard-library issues).
+  CasaOS-Common and its dependency tree (echo, jwt v3) are gone — the
+  gateway route is registered through lintux-modkit's `gateway` package.
 - README: the templates table and a five-click walkthrough are back.
 
 ### Fixed
@@ -41,6 +47,7 @@
   password when the form echoed the mask.
 - The session token is renewed through the shell's refresh endpoint when
   it expires; the "reload ZimaOS" banner only appears if that fails.
+- The Sync & Backup card kept its old words after a language switch.
 
 ## 0.3.0 — 2026-09-18
 

@@ -194,8 +194,8 @@ See [FEATURES.md](FEATURES.md). Every call except `/cron/health` needs
 
 ## Contributing
 
-Issues and pull requests are welcome. The French translation was drafted
-by a non-native speaker — corrections are especially welcome.
+Issues and pull requests are welcome. The French and Spanish translations
+were drafted by a non-native speaker — corrections are especially welcome.
 
 ## Credits
 
