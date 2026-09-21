@@ -36,6 +36,14 @@ ZimaOS Module Store as `zima_cron`.
   Success and failure can be selected separately.
 - **Import / export** — a versioned JSON file that round-trips without
   loss; rejected entries are named in the result.
+- **Sync & Backup jobs in the same list** — if the
+  [Sync & Backup](https://github.com/chicohaager/zima-backup) module is
+  installed, its jobs appear in a second card below the tasks: name,
+  backup or sync, schedule in words, next run and last result, read from
+  the module with the same session (`GET /v2/zbackup/api/jobs`). Cron
+  only shows them — starting, editing and running stays in Sync & Backup,
+  which keeps its own scheduler, so nothing exists twice. Without the
+  module (404 at the gateway) the card is not there.
 - **Four languages** — English, German, French, Chinese. The UI follows the
   language of the ZimaOS shell and can be switched in the header.
 - **Light and dark theme** in the same design language as ZFW.

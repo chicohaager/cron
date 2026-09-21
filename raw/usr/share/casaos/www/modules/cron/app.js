@@ -117,6 +117,7 @@ const state = {
   templates: [],
   categories: [],
   tags: [],
+  backupJobs: [], // Sync & Backup module's jobs, read-only; null when it did not answer
   openLogs: new Map(), // id -> { entries, loading, search }
   pollTimer: null,
   editingId: null,
@@ -137,6 +138,7 @@ async function loadTasks() {
     hideBanner();
     render();
     schedulePoll();
+    loadBackupJobs();
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       showBanner(describeError(err), 'bad');
@@ -165,6 +167,84 @@ function render() {
   renderStats();
   renderFilters();
   renderTable();
+}
+
+/* ---------- Sync & Backup jobs, read-only ----------
+   The Sync & Backup module keeps its own scheduler; this list only shows
+   what it has planned so one page holds everything that runs on a timer.
+   Measured on ZimaOS 1.7.1 from this page: GET /v2/zbackup/api/jobs answers
+   200 with the shell's session token, 401 without, and a module that is not
+   installed gives 404 at the gateway — then the card stays hidden. */
+
+const ZBACKUP_API = '/v2/zbackup/api';
+
+async function loadBackupJobs() {
+  const card = $('#zbackupCard');
+  try {
+    const res = await fetchWithSession(`${ZBACKUP_API}/jobs`);
+    if (res.status === 404) { card.hidden = true; return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const jobs = await res.json();
+    state.backupJobs = Array.isArray(jobs) ? jobs : [];
+    renderBackupJobs();
+  } catch (err) {
+    // the module is there but did not answer: say so instead of hiding it
+    console.warn('Sync & Backup jobs not loaded', err);
+    state.backupJobs = null;
+    renderBackupJobs(describeError(err));
+  }
+}
+
+// fetchWithSession is fetch with the shell's token and one refresh on 401,
+// for an endpoint outside this module's API base.
+async function fetchWithSession(url, retried = false) {
+  const token = safeGet('access_token');
+  const res = await fetch(url, { headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
+  if (res.status === 401 && !retried && await refreshSession()) return fetchWithSession(url, true);
+  return res;
+}
+
+function backupScheduleLabel(job) {
+  const s = job.schedule || {};
+  if (s.type === 'manual' || !s.type) return t('zb.manual');
+  return scheduleLabel({ type: s.type, interval_min: s.interval_min, cron_expr: s.cron_expr });
+}
+
+function backupResultPill(job) {
+  if (job.running) return `<span class="pill accent"><span class="dot pulse"></span>${t('status.executing')}</span>`;
+  const r = job.last_result;
+  if (!r) return `<span class="muted">${t('zb.notRun')}</span>`;
+  const cls = r.success ? (r.code === 'empty' ? 'warn' : 'ok') : 'bad';
+  const label = LANGS.en[`zb.result.${r.code}`] ? t(`zb.result.${r.code}`) : r.code;
+  return `<span class="pill ${cls}" title="${esc((r.message || '').slice(0, 300))}">${esc(label)}</span>`;
+}
+
+function renderBackupJobs(errorText) {
+  const card = $('#zbackupCard');
+  const body = $('#zbackupBody');
+  const jobs = state.backupJobs;
+  if (errorText) {
+    card.hidden = false;
+    body.innerHTML = `<tr><td colspan="5" class="empty">${esc(errorText)}</td></tr>`;
+    return;
+  }
+  if (!jobs || !jobs.length) { card.hidden = true; return; }
+  card.hidden = false;
+  body.innerHTML = '';
+  for (const job of jobs) {
+    const tr = document.createElement('tr');
+    tr.className = job.enabled ? '' : 'disabled';
+    const from = (job.sources || []).map((p) => p.split('/').filter(Boolean).pop() || p);
+    const to = job.target && (job.target.path || job.target.remote || job.target.host || job.target.type) || '';
+    const next = job.enabled && job.schedule && job.schedule.type !== 'manual' && job.next_run_at ? fmtTime(job.next_run_at) : '–';
+    tr.innerHTML = `
+      <td class="name"><strong>${esc(job.name)}</strong><code class="cmd" title="${esc((job.sources || []).join('\n'))}">${esc(from.join(', '))} → ${esc(to)}</code></td>
+      <td class="nowrap"><span class="tag">${t(job.kind === 'sync' ? 'zb.kind.sync' : 'zb.kind.backup')}</span>${job.enabled ? '' : ` <span class="muted">${t('zb.disabled')}</span>`}</td>
+      <td class="nowrap">${backupScheduleLabel(job)}</td>
+      <td class="nowrap">${next}</td>
+      <td>${backupResultPill(job)}</td>`;
+    body.appendChild(tr);
+  }
 }
 
 function renderStats() {
