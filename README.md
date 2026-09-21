@@ -44,7 +44,7 @@ ZimaOS Module Store as `zima_cron`.
   only shows them — starting, editing and running stays in Sync & Backup,
   which keeps its own scheduler, so nothing exists twice. Without the
   module (404 at the gateway) the card is not there.
-- **Four languages** — English, German, French, Chinese. The UI follows the
+- **Five languages** — English, German, French, Spanish, Chinese. The UI follows the
   language of the ZimaOS shell and can be switched in the header.
 - **Light and dark theme** in the same design language as ZFW.
 - **Authenticated** — every API call needs a valid ZimaOS session token;
