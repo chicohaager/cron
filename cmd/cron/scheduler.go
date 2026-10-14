@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -319,7 +320,7 @@ func classify(runErr, ctxErr error, stdout, stderr string, timeout time.Duration
 	}
 	msg := strings.TrimSpace(stdout + "\n" + stderr)
 	code := codeExitError
-	if ctxErr == context.DeadlineExceeded {
+	if errors.Is(ctxErr, context.DeadlineExceeded) {
 		code = codeTimeout
 		if msg == "" {
 			msg = fmt.Sprintf("timeout after %s", timeout)

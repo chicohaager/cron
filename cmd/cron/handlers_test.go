@@ -90,7 +90,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	createVia(t, srv, taskRequest{Name: "i1", Command: "true", Type: "interval", IntervalMin: 45, Env: map[string]string{"K": "v"}})
 
 	resp, raw := call(t, srv, http.MethodGet, "/cron/export", nil)
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("export: %d", resp.StatusCode)
 	}
 	var exported exportFile
@@ -107,7 +107,7 @@ func TestExportImportRoundTrip(t *testing.T) {
 	tasks = map[string]*Task{}
 	mu.Unlock()
 	resp, raw = call(t, srv, http.MethodPost, "/cron/import", string(raw))
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("import: %d %s", resp.StatusCode, raw)
 	}
 	var result struct {
@@ -179,7 +179,7 @@ func TestValidationErrorsCarryCodes(t *testing.T) {
 		resp, raw := call(t, srv, http.MethodPost, "/cron/tasks", c.req)
 		var body map[string]string
 		decode(t, raw, &body)
-		if resp.StatusCode != 400 || body["code"] != c.code {
+		if resp.StatusCode != http.StatusBadRequest || body["code"] != c.code {
 			t.Errorf("%+v: got %d %s, want 400 %s", c.req, resp.StatusCode, raw, c.code)
 		}
 	}
@@ -194,13 +194,13 @@ func TestDependencyCycleIsRejected(t *testing.T) {
 		taskRequest{Name: "a", Command: "true", Type: "interval", IntervalMin: 1, DependsOn: []string{b.ID}})
 	var body map[string]string
 	decode(t, raw, &body)
-	if resp.StatusCode != 400 || body["code"] != "dependency_cycle" {
+	if resp.StatusCode != http.StatusBadRequest || body["code"] != "dependency_cycle" {
 		t.Fatalf("got %d %s", resp.StatusCode, raw)
 	}
 	resp, raw = call(t, srv, http.MethodPut, "/cron/tasks/"+a.ID,
 		taskRequest{Name: "a", Command: "true", Type: "interval", IntervalMin: 1, DependsOn: []string{a.ID}})
 	decode(t, raw, &body)
-	if resp.StatusCode != 400 || body["code"] != "dependency_self" {
+	if resp.StatusCode != http.StatusBadRequest || body["code"] != "dependency_self" {
 		t.Fatalf("self-dependency: got %d %s", resp.StatusCode, raw)
 	}
 }
@@ -215,7 +215,7 @@ func TestEditKeepsMaskedCredentialsAndReschedules(t *testing.T) {
 	// edit with the masked value echoed back, change the schedule
 	resp, raw := call(t, srv, http.MethodPut, "/cron/tasks/"+v.ID, taskRequest{Name: "e2", Command: "true", Type: "cron", CronExpr: "0 4 * * 0",
 		Notifications: []notify.Config{{Enabled: true, Type: "email", Target: "a@example.com", SMTPHost: "mail", SMTPPass: maskedSecret}}})
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("edit: %d %s", resp.StatusCode, raw)
 	}
 	mu.RLock()
@@ -261,7 +261,7 @@ func TestHealthIsOpenAndTasksListIsSortedByPriority(t *testing.T) {
 		t.Fatalf("order %v", names)
 	}
 	resp, raw := call(t, srv, http.MethodGet, "/cron/health", nil)
-	if resp.StatusCode != 200 || !strings.Contains(string(raw), `"tasks_total":3`) {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"tasks_total":3`) {
 		t.Fatalf("health: %d %s", resp.StatusCode, raw)
 	}
 }
@@ -272,7 +272,7 @@ func TestOverflowingIntervalDoesNotWedgeTheServer(t *testing.T) {
 	srv := newTestServer(t)
 	resp, _ := call(t, srv, http.MethodPost, "/cron/tasks",
 		taskRequest{Name: "x", Command: "true", Type: "interval", IntervalMin: 9007199254740991})
-	if resp.StatusCode != 400 {
+	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
 	done := make(chan int, 1)
