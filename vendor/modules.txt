@@ -1,5 +1,5 @@
 # github.com/chicohaager/lintux-modkit v0.0.0 => ../lintux-modkit
-## explicit; go 1.26.0
+## explicit; go 1.27.0
 github.com/chicohaager/lintux-modkit/auth
 github.com/chicohaager/lintux-modkit/gateway
 github.com/chicohaager/lintux-modkit/httpx

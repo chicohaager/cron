@@ -58,7 +58,8 @@ func main() {
 		runtimePath = envPath
 	}
 
-	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", "0"))
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort("127.0.0.1", "0"))
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -5,9 +5,11 @@ package notify
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"log"
 	"net/http"
 	"net/smtp"
@@ -262,13 +264,17 @@ func sendUptimeKumaWebhook(webhookURL string, task TaskInfo, result ResultInfo) 
 }
 
 func postWebhook(webhookURL, contentType string, body []byte) error {
-	var resp *http.Response
-	var err error
-	if body == nil {
-		resp, err = httpClient.Post(webhookURL, contentType, http.NoBody)
-	} else {
-		resp, err = httpClient.Post(webhookURL, contentType, bytes.NewReader(body))
+	var reqBody io.Reader = http.NoBody
+	if body != nil {
+		reqBody = bytes.NewReader(body)
 	}
+	// Kein Aufrufer-Context vorhanden; httpClient begrenzt die Dauer per Timeout.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, webhookURL, reqBody)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", webhookURL, err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", webhookURL, err)
 	}
@@ -360,16 +366,22 @@ func SendTelegramMessage(botToken, chatID, text string) error {
 	if err != nil {
 		return fmt.Errorf("marshal telegram payload: %w", err)
 	}
-	resp, err := httpClient.Post(apiURL, "application/json", bytes.NewReader(body))
+	// Exportierte Signatur bleibt (Nutzer außerhalb des Moduls); Dauer begrenzt httpClient.
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, apiURL, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("telegram API: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("telegram API: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		var errResp struct {
 			Description string `json:"description"`
 		}
-		json.NewDecoder(resp.Body).Decode(&errResp)
+		_ = json.NewDecoder(resp.Body).Decode(&errResp) // Beschreibung ist optional; der Statuscode trägt den Fehler
 		return fmt.Errorf("telegram API %d: %s", resp.StatusCode, errResp.Description)
 	}
 	return nil

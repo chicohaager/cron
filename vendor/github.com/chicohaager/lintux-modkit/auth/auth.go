@@ -40,6 +40,12 @@ const (
 	jwksMaxStale = 1 * time.Hour
 	// clockSkew is the tolerance applied when checking nbf.
 	clockSkew = 60 * time.Second
+	// jwksRetryFloor is the least age a cached key set must have before a
+	// token that matches none of its keys triggers an early refresh. The
+	// user service issues a new key when it restarts (measured on ZimaOS
+	// 1.7.1 after a system restore: fresh logins failed for the rest of
+	// the TTL); a floor keeps a stream of garbage tokens from hammering it.
+	jwksRetryFloor = 15 * time.Second
 	// jwksRoute is the gateway route under which the user-service publishes
 	// its keys. Its target port is assigned by the system and changes across
 	// restarts, so it is looked up, never pinned.
@@ -284,6 +290,25 @@ func (v *Verifier) currentKeys() ([]keyEntry, error) {
 	return keys, nil
 }
 
+// refreshedKeys fetches the key set again when the cached one is older
+// than jwksRetryFloor, and returns what is cached afterwards.
+func (v *Verifier) refreshedKeys() ([]keyEntry, error) {
+	v.mu.RLock()
+	fetched := v.fetched
+	v.mu.RUnlock()
+	if time.Since(fetched) < jwksRetryFloor {
+		return nil, errors.New("key set refreshed too recently")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := v.refreshKeys(ctx); err != nil {
+		return nil, err
+	}
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.keys, nil
+}
+
 // Verify checks a raw JWT: ES256 header, r‖s signature over the signing
 // input against a JWKS key (matched by kid when the token names one),
 // accepted issuer, mandatory exp, and nbf with a small skew.
@@ -318,18 +343,22 @@ func (v *Verifier) Verify(token string) error {
 	if err != nil {
 		return fmt.Errorf("JWKS unavailable: %w", err)
 	}
-	verified := false
-	for _, k := range keys {
-		if hdr.Kid != "" && k.kid != "" && k.kid != hdr.Kid {
-			continue
+	matches := func(keys []keyEntry) bool {
+		for _, k := range keys {
+			if hdr.Kid != "" && k.kid != "" && k.kid != hdr.Kid {
+				continue
+			}
+			if ecdsa.Verify(k.pub, digest[:], r, s) {
+				return true
+			}
 		}
-		if ecdsa.Verify(k.pub, digest[:], r, s) {
-			verified = true
-			break
-		}
+		return false
 	}
-	if !verified {
-		return errors.New("signature matches no JWKS key")
+	if !matches(keys) {
+		// the key set may have rotated since it was fetched: refresh once and look again
+		if keys, err = v.refreshedKeys(); err != nil || !matches(keys) {
+			return errors.New("signature matches no JWKS key")
+		}
 	}
 
 	plRaw, err := b64.DecodeString(parts[1])
