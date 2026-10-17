@@ -27,7 +27,7 @@ func Next(expr string, from time.Time) time.Time {
 	dom, ok3 := parseField(f[2], fields[2])
 	month, ok4 := parseField(f[3], fields[3])
 	dow, ok5 := parseField(f[4], fields[4])
-	if !(ok1 && ok2 && ok3 && ok4 && ok5) {
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
 		return time.Time{}
 	}
 
