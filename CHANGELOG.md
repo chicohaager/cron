@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.3 — 2026-10-17
+
+### Fixed
+- The boot watchdog (`cron-watchdog` / `cron-refresh` units in
+  `/etc/systemd/system`) no longer takes any error while probing for systemd
+  as "not systemd": only a missing `/run/systemd/system` skips its install.
+  Its `systemctl` calls are bounded to 60 s, so a start job that never
+  finishes cannot hold Cron at startup.
+- A login right after the ZimaOS user service restarted was refused for up
+  to ten minutes: the service issues a new signing key on restart, and Cron
+  kept checking tokens against its cached key set (measured on 1.7.1 after a
+  system restore). A token that matches no cached key now makes Cron fetch
+  the keys once more (at most every 15 s).
+
+### Changed
+- Built with Go 1.27.2 (govulncheck: no known issues).
+- lintux-modkit current; lint clean-ups without behaviour change.
+
 ## 0.3.2 — 2026-09-21
 
 0.3.1 was built and tested on a box but never published; its changes ship
