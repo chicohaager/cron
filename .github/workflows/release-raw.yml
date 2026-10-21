@@ -34,8 +34,16 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/checkout@v4
+        with:
+          repository: chicohaager/lintux-modkit
+          # pinned: a release builds from a known packaging script, not from whatever main is
+          ref: 65d3bf73d8bff55494c470f483d05379786c320e
+          path: .lintux-modkit
       - run: sudo apt-get update && sudo apt-get install -y squashfs-tools
       - run: ./build.sh ${{ matrix.arch }}
+        env:
+          LINTUX_MODKIT: .lintux-modkit
       - uses: actions/upload-artifact@v4
         with:
           name: cron-${{ matrix.arch }}
