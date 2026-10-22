@@ -1,7 +1,7 @@
 # Cron — task scheduler for ZimaOS
 
 [![ZimaOS](https://img.shields.io/badge/ZimaOS-Module-blue?style=flat-square)](https://github.com/IceWhaleTech/ZimaOS)
-[![License](https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
 Run commands on an interval or a cron expression, keep a history of every
 run, and get notified when something fails — from a small dashboard inside
@@ -206,7 +206,7 @@ were drafted by a non-native speaker — corrections are especially welcome.
   formats (#2)
 - everyone who reported the weekday bug (#2, #4)
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+MIT License — see [LICENSE](LICENSE).
 
 ## ☕ Support
 
