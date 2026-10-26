@@ -179,6 +179,8 @@ does not touch it.
 
 ```sh
 ./build.sh amd64      # or arm64 — needs Go 1.22+ and squashfs-tools
+tools/check-reproducible.sh   # CI runs it too: builds with umask 022, 002 and 077, same bytes
+../lintux-modkit/tools/check-release.sh . v<version> cron   # after the release: rebuilds the tag, same bytes as the asset
 ```
 
 produces `cron-<arch>.raw` plus a `.sha256`. `go test -race ./...` and
