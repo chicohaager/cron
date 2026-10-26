@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chicohaager/cron/internal/storage"
+	"github.com/chicohaager/lintux-modkit/appdata"
 	"github.com/chicohaager/lintux-modkit/auth"
 	"github.com/chicohaager/lintux-modkit/gateway"
 	"github.com/chicohaager/lintux-modkit/httpx"
@@ -23,7 +24,7 @@ import (
 )
 
 const (
-	version            = "0.3.3"
+	version            = "0.3.4"
 	defaultStoragePath = "/DATA/AppData/cron"
 	defaultRuntimePath = "/var/run/casaos" // where ZimaOS' gateway announces itself (management.url)
 	maxRequestBody     = 1 << 20           // 1 MB
@@ -81,6 +82,17 @@ func main() {
 	log.Printf("[cron] server stopped")
 }
 
+// openAt opens the storage after the folder check: /DATA/AppData is 0777 without
+// the sticky bit on ZimaOS 1.8 and the jobs run as root (KB §79.11) — appdata.Secure
+// sets the sticky bit and refuses a folder that is a symlink, not root's or
+// writable by others.
+func openAt(path string) (storage.Storage, error) {
+	if err := appdata.Secure(path); err != nil {
+		return nil, err
+	}
+	return storage.NewFileStorage(path)
+}
+
 // openStorage retries until the data directory is writable; on ZimaOS the
 // service can start before /DATA is mounted.
 func openStorage() storage.Storage {
@@ -89,7 +101,7 @@ func openStorage() storage.Storage {
 		path = envPath
 	}
 	for i := 1; ; i++ {
-		fs, err := storage.NewFileStorage(path)
+		fs, err := openAt(path)
 		if err == nil {
 			return fs
 		}
