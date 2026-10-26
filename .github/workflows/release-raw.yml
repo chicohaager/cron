@@ -38,7 +38,7 @@ jobs:
         with:
           repository: chicohaager/lintux-modkit
           # pinned: a release builds from a known packaging script, not from whatever main is
-          ref: 8d0321108e3cbe024597e68620f6f7ef3da7a938  # appdata guard; image modes independent of the umask, so CI and local builds match
+          ref: e38e9fdb69466ab00f8a30537bb2f0bd44538d67  # appdata guard; image modes fixed (755/644) whatever the umask, so CI and local builds match
           path: .lintux-modkit
       - run: sudo apt-get update && sudo apt-get install -y squashfs-tools
       - run: ./build.sh ${{ matrix.arch }}
