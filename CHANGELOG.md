@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.4 — 2026-10-26
+
+### Security
+- The jobs folder `/DATA/AppData/cron` is checked before Cron opens it: `/DATA/AppData`
+  is writable by everyone on ZimaOS 1.8 (mode 0777 without the sticky bit; the share of
+  `/DATA` is writable over SMB), and the jobs run as root — another user could have
+  replaced the folder with one holding their own jobs. Cron now sets the sticky bit on
+  `/DATA/AppData` (then only a folder's owner can rename it) and refuses a folder that is
+  a symlink, not root's, or writable by others (lintux-modkit `appdata`).
+- Session tokens are checked against the keys named in `user-service.url` (root only),
+  not the gateway's route table, which a process without root can change (lintux-modkit
+  v0.1.1, measured on ZimaOS 1.8.0).
+
 ## 0.3.3 — 2026-10-17
 
 ### Fixed

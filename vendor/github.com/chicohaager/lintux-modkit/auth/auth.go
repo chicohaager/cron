@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -122,14 +123,40 @@ func StaticURL(u string) Resolver {
 	return func(context.Context) (string, error) { return u, nil }
 }
 
-// JWKSResolver discovers the JWKS endpoint through the gateway's route
-// table: <runtimePath>/management.url names the gateway management API,
-// GET /v1/gateway/routes lists {path,target} pairs. The target is accepted
-// only when it points at loopback — the table is mutable, and an off-host
-// entry must not become the trust anchor for who may run root commands.
+// JWKSResolver finds the JWKS endpoint of the ZimaOS user service.
+//
+// First <runtimePath>/user-service.url, which the user service (root) writes
+// with mode 0600: the gateway's route table is no trust anchor, because a
+// process without root can upsert a route there without login (measured on
+// ZimaOS 1.8.0, 2026-10-26: POST /v1/gateway/routes as uid 999 → 201) and
+// point /.well-known/jwks.json at its own keys. The file must belong to root
+// and be writable by nobody else; a file that fails that is an error, not a
+// reason to ask the table.
+//
+// Without the file (older ZimaOS), the route table: <runtimePath>/management.url
+// names the gateway management API, GET /v1/gateway/routes lists {path,target}
+// pairs. Either way the target is accepted only on loopback.
 func JWKSResolver(runtimePath string) Resolver {
 	client := &http.Client{Timeout: 5 * time.Second}
 	return func(ctx context.Context) (string, error) {
+		us := filepath.Join(runtimePath, "user-service.url")
+		if fi, err := os.Lstat(us); err == nil {
+			st, ok := fi.Sys().(*syscall.Stat_t)
+			if !fi.Mode().IsRegular() || !ok || int(st.Uid) != trustedUID || fi.Mode().Perm()&0o022 != 0 {
+				return "", fmt.Errorf("%s is not a file only root writes (mode %v) — refusing it as trust anchor", us, fi.Mode())
+			}
+			raw, err := os.ReadFile(us)
+			if err != nil {
+				return "", fmt.Errorf("user service url: %w", err)
+			}
+			target := strings.TrimRight(strings.TrimSpace(string(raw)), "/") + jwksRoute
+			if !isLoopbackURL(target) {
+				return "", fmt.Errorf("user service %q is not loopback — refusing off-host trust anchor", strings.TrimSpace(string(raw)))
+			}
+			return target, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("user service url: %w", err)
+		}
 		raw, err := os.ReadFile(filepath.Join(runtimePath, "management.url"))
 		if err != nil {
 			return "", fmt.Errorf("gateway management url: %w", err)
@@ -167,6 +194,9 @@ func JWKSResolver(runtimePath string) Resolver {
 		return "", fmt.Errorf("route %q not registered at the gateway", jwksRoute)
 	}
 }
+
+// trustedUID owns user-service.url (root); tests set their own.
+var trustedUID = 0
 
 func isLoopbackURL(raw string) bool {
 	u, err := url.Parse(raw)
