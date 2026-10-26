@@ -52,22 +52,28 @@ ZimaOS Module Store as `zima_cron`.
 
 ## Installation
 
-Requires ZimaOS 1.7.x on amd64 or arm64.
+Requires ZimaOS 1.7.x or 1.8.0 on amd64 or arm64 (0.3.3 measured
+running on ZimaOS 1.8.0, amd64).
 
-**Module Store:** open *Settings → Module Store* in ZimaOS and install
-*zima_cron*, or on the host:
-
-```sh
-zpkg install zima_cron
-```
-
-**Manual:** download `cron-amd64.raw` (or `cron-arm64.raw`) from the
-[releases](https://github.com/chicohaager/cron/releases), copy it to the
-host **as `cron.raw`** and run
+On the host, download the image for your architecture **as `cron.raw`**
+and install it:
 
 ```sh
+cd /tmp && curl -fL -o cron.raw https://github.com/chicohaager/cron/releases/latest/download/cron-amd64.raw
 sudo zpkg install /tmp/cron.raw
+sudo systemctl daemon-reload
 ```
+
+On ARM use `cron-arm64.raw`. After `zpkg install` systemd still reports
+`NeedDaemonReload=yes` for its units (measured on ZimaOS 1.8.0);
+`daemon-reload` clears that.
+
+**Module Store:** `zpkg install zima_cron` currently fails with
+`bad response code: 404`. The store entry still carries the old name
+`zima_cron`, so `zpkg` asks the release for `zima_cron.raw`, which does
+not exist. The fix is pending in
+[IceWhaleTech/Mod-Store#20](https://github.com/IceWhaleTech/Mod-Store/pull/20);
+until it is merged, use the manual install above.
 
 `zpkg` accepts the image only under the name that matches
 `extension-release.cron` inside it; any other file name is refused with
