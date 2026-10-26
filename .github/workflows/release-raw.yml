@@ -44,6 +44,11 @@ jobs:
       - run: ./build.sh ${{ matrix.arch }}
         env:
           LINTUX_MODKIT: .lintux-modkit
+      # the same commit must give the same image on any machine: built again with umask 002
+      # and group-writable files, the bytes must not change (file modes, VCS info, 2026-10-26)
+      - run: tools/check-reproducible.sh ${{ matrix.arch }}
+        env:
+          LINTUX_MODKIT: .lintux-modkit
       - uses: actions/upload-artifact@v4
         with:
           name: cron-${{ matrix.arch }}
