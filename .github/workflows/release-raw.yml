@@ -38,7 +38,7 @@ jobs:
         with:
           repository: chicohaager/lintux-modkit
           # pinned: a release builds from a known packaging script, not from whatever main is
-          ref: 65d3bf73d8bff55494c470f483d05379786c320e
+          ref: fa4eb12a6549268b80f9f8c68349dbc5c0e8d319  # appdata guard; the image tested on ZimaOS 1.8 was packaged with it
           path: .lintux-modkit
       - run: sudo apt-get update && sudo apt-get install -y squashfs-tools
       - run: ./build.sh ${{ matrix.arch }}
