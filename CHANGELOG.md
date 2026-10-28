@@ -3,6 +3,10 @@
 ## 0.3.5 — unreleased
 
 ### Fixed
+- A symlinked `/DATA/AppData` (moved to another disk) is followed one step to the real folder,
+  which is then checked up to `/` (lintux-modkit `f0bd1c4`); before, it was refused as "not a plain
+  directory" (forum thread 9566, Tailscale), and the folder behind a symlinked ancestor was not
+  checked at all. A chain of symlinks stays refused; a missing folder now says "is missing".
 - On a box whose `/DATA` belonged to the login user (uid 999, also its home) instead of
   root, Cron refused its jobs folder — rightly, that user could rename `/DATA/AppData` —
   exited, and systemd restarted it over and over: no task ran and nothing showed why.
