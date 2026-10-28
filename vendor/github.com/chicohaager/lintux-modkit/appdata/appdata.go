@@ -19,6 +19,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 )
 
@@ -101,16 +102,30 @@ func chain(p, dir string) error {
 	}
 }
 
-// target is where the symlink l points, as an absolute path. Secure follows one
-// step to an existing path without further symlinks (or . and ..), and nothing else
-// — the same rule as sysext/appdata-guard.sh.
+// target is where the symlink l points, as an absolute path. Secure follows only a
+// symlink of root (its owner could point it elsewhere after the check), one step to
+// an existing path without further symlinks (repeated and trailing slashes do not
+// count, . and .. do), and nothing else — the same rule as sysext/appdata-guard.sh.
 func target(l string) (string, error) {
+	lfi, err := os.Lstat(l)
+	if err != nil {
+		return "", err
+	}
+	if !trusted(uidOf(lfi)) {
+		return "", fmt.Errorf("appdata: %s is a symlink of uid %d; only a symlink of root is followed", l, uidOf(lfi))
+	}
 	t, err := os.Readlink(l)
 	if err != nil {
 		return "", err
 	}
 	if !filepath.IsAbs(t) {
 		t = filepath.Dir(l) + "/" + t
+	}
+	for strings.Contains(t, "//") {
+		t = strings.ReplaceAll(t, "//", "/")
+	}
+	if len(t) > 1 {
+		t = strings.TrimSuffix(t, "/")
 	}
 	r, err := filepath.EvalSymlinks(t)
 	if err != nil {
@@ -180,7 +195,7 @@ func Secure(dir string) error {
 			return fmt.Errorf("appdata: %s belongs to uid %d", parent, uidOf(pfi))
 		}
 		if !safe(pfi) {
-			if err := os.Chmod(parent, pfi.Mode().Perm()|os.ModeSticky); err != nil {
+			if err := os.Chmod(parent, pfi.Mode().Perm()|os.ModeSticky|pfi.Mode()&(os.ModeSetgid|os.ModeSetuid)); err != nil {
 				return fmt.Errorf("appdata: sticky bit on %s: %w", parent, err)
 			}
 		}
