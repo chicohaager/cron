@@ -28,7 +28,8 @@ function resolveLanguage() {
 
 function t(key, params) {
   let s = (LANGS[lang] && LANGS[lang][key]) || (LANGS.en && LANGS.en[key]) || key;
-  if (params) for (const [k, v] of Object.entries(params)) s = s.replace(`{${k}}`, v);
+  // a function replacer: values are paths and server text, where '$&' and friends must stay literal
+  if (params) for (const [k, v] of Object.entries(params)) s = s.replace(`{${k}}`, () => v);
   return s;
 }
 
