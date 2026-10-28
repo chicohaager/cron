@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.5 — unreleased
+
+### Fixed
+- On a box whose `/DATA` belonged to the login user (uid 999, also its home) instead of
+  root, Cron refused its jobs folder — rightly, that user could rename `/DATA/AppData` —
+  exited, and systemd restarted it over and over: no task ran and nothing showed why.
+  The folder check (lintux-modkit `appdata`) now gives `/DATA` back to root and logs it
+  with the way back (`chown <uid>:<gid> /DATA`); its mode stays.
+- When the folder is still refused, Cron no longer exits: the API and `/cron/health`
+  answer 503 `storage_refused` with the reason, the app shows it as a red banner (all five
+  languages), and Cron tries the folder again every 30 s, so a fixed folder works
+  without a restart.
+
 ## 0.3.4 — 2026-10-26
 
 ### Security

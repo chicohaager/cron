@@ -142,6 +142,10 @@ async function loadTasks() {
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       showBanner(describeError(err), 'bad');
+    } else if (err instanceof ApiError && err.code === 'storage_refused') {
+      // the server is up but refuses its folder (no task runs); it tries again itself
+      showBanner(t('error.storage_refused', { msg: err.message }), 'bad');
+      setTimeout(loadTasks, 30000);
     } else {
       showBanner(t('error.offline'), 'warn');
       setTimeout(loadTasks, 5000);

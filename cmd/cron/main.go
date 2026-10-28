@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,7 +26,7 @@ import (
 )
 
 const (
-	version            = "0.3.4"
+	version            = "0.3.5"
 	defaultStoragePath = "/DATA/AppData/cron"
 	defaultRuntimePath = "/var/run/casaos" // where ZimaOS' gateway announces itself (management.url)
 	maxRequestBody     = 1 << 20           // 1 MB
@@ -32,14 +34,20 @@ const (
 	maxConcurrentRuns  = 10
 	storageAttempts    = 30 // /DATA is a late bind mount on ZimaOS; wait for it
 	storageRetryDelay  = 2 * time.Second
+	storageRecheck     = 30 * time.Second // after the wait: how often a refused storage is tried again
 )
 
 var (
-	tasks     = map[string]*Task{}
-	mu        sync.RWMutex
-	store     storage.Storage
-	startTime = time.Now()
-	execSem   = make(chan struct{}, maxConcurrentRuns)
+	tasks = map[string]*Task{}
+	mu    sync.RWMutex
+	store storage.Storage
+	// storageErr is why the storage is refused after the wait, nil while it is open.
+	// The server stays up and answers 503 storage_refused with the reason: 0.3.4
+	// exited instead, systemd restarted it 1038 times on a box whose /DATA belonged
+	// to uid 999, no job ran and nothing showed why (nas-main, 2026-10-28).
+	storageErr atomic.Pointer[string]
+	startTime  = time.Now()
+	execSem    = make(chan struct{}, maxConcurrentRuns)
 )
 
 func main() {
@@ -49,9 +57,15 @@ func main() {
 		log.Printf("[cron] %v", err)
 	}
 
-	store = openStorage()
-	if err := loadPersistedTasks(); err != nil {
-		log.Printf("[cron] Warning: failed to load tasks: %v", err)
+	path := defaultStoragePath
+	if envPath := os.Getenv("CRON_DATA_PATH"); envPath != "" {
+		path = envPath
+	}
+	if fs, err := openStorage(path, storageAttempts, storageRetryDelay); err != nil {
+		refuseStorage(path, err)
+		go recheckStorage(path, storageRecheck)
+	} else {
+		useStorage(fs)
 	}
 
 	runtimePath := defaultRuntimePath
@@ -72,7 +86,7 @@ func main() {
 
 	verifier := newVerifier(runtimePath)
 	srv := &http.Server{
-		Handler:           withStatic(httpx.CSRF(newMux(verifier.Middleware))),
+		Handler:           withStatic(httpx.CSRF(storageGate(newMux(verifier.Middleware)))),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go shutdownOnSignal(srv)
@@ -95,22 +109,63 @@ func openAt(path string) (storage.Storage, error) {
 
 // openStorage retries until the data directory is writable; on ZimaOS the
 // service can start before /DATA is mounted.
-func openStorage() storage.Storage {
-	path := defaultStoragePath
-	if envPath := os.Getenv("CRON_DATA_PATH"); envPath != "" {
-		path = envPath
-	}
+func openStorage(path string, attempts int, delay time.Duration) (storage.Storage, error) {
 	for i := 1; ; i++ {
 		fs, err := openAt(path)
 		if err == nil {
-			return fs
+			return fs, nil
 		}
-		if i >= storageAttempts {
-			log.Fatalf("[cron] storage at %s not available after %d attempts: %v", path, i, err)
+		if i >= attempts {
+			return nil, err
 		}
-		log.Printf("[cron] storage not ready (attempt %d/%d): %v", i, storageAttempts, err)
-		time.Sleep(storageRetryDelay)
+		log.Printf("[cron] storage not ready (attempt %d/%d): %v", i, attempts, err)
+		time.Sleep(delay)
 	}
+}
+
+// useStorage loads the tasks from fs; until then no task is scheduled.
+func useStorage(fs storage.Storage) {
+	store = fs
+	if err := loadPersistedTasks(); err != nil {
+		log.Printf("[cron] Warning: failed to load tasks: %v", err)
+	}
+	storageErr.Store(nil)
+}
+
+func refuseStorage(path string, err error) {
+	msg := err.Error()
+	storageErr.Store(&msg)
+	log.Printf("[cron] ERROR: storage at %s refused, no task runs until it is fixed (tried again every %s): %v", path, storageRecheck, err)
+}
+
+// recheckStorage tries the refused storage again until it opens, so a fixed
+// folder works without a restart.
+func recheckStorage(path string, every time.Duration) {
+	for {
+		time.Sleep(every)
+		fs, err := openAt(path)
+		if err != nil {
+			if old := storageErr.Load(); old == nil || *old != err.Error() {
+				refuseStorage(path, err)
+			}
+			continue
+		}
+		useStorage(fs)
+		log.Printf("[cron] storage at %s available again, tasks loaded", path)
+		return
+	}
+}
+
+// storageGate answers every API route but /health with 503 storage_refused
+// while the storage is refused (the handlers need it).
+func storageGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if msg := storageErr.Load(); msg != nil && strings.HasPrefix(r.URL.Path, routePrefix+"/") && r.URL.Path != routePrefix+"/health" {
+			writeError(w, http.StatusServiceUnavailable, "storage_refused", *msg)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // newVerifier builds the session-token verifier. CRON_DISABLE_AUTH=1 is a

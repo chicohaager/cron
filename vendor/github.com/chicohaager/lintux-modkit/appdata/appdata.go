@@ -16,6 +16,7 @@ package appdata
 import (
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -26,6 +27,16 @@ var trusted = func(uid int) bool { return uid == 0 || uid == os.Geteuid() }
 
 // parentOK replaces the parent and ancestor checks in tests.
 var parentOK func(string) bool
+
+// dataRoot is the one ancestor Secure repairs: on a ZimaOS 1.8 box /DATA belonged to
+// the login user (uid 999, also its home; measured nas-main, 2026-10-28), on two others to
+// root (nas-test, remote-cube). That owner can rename /DATA/AppData, so the check refuses rightly,
+// and every module with this guard stopped. Secure gives /DATA back to root (the mode
+// stays) and says so in the log; a symlinked /DATA or an unsafe mode is still refused.
+var dataRoot = "/DATA"
+
+// chown replaces os.Chown in tests (they do not run as root).
+var chown = os.Chown
 
 func uidOf(fi os.FileInfo) int {
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
@@ -40,8 +51,30 @@ func safe(fi os.FileInfo) bool {
 	return fi.Mode().Perm()&0o022 == 0 || fi.Mode()&os.ModeSticky != 0
 }
 
+// repairOwner gives a (dataRoot) to root and returns its new state, which the caller
+// checks as before.
+func repairOwner(a string, fi os.FileInfo, dir string) (os.FileInfo, error) {
+	lfi, err := os.Lstat(a)
+	if err != nil {
+		return nil, err
+	}
+	if lfi.Mode()&os.ModeSymlink != 0 || !lfi.IsDir() {
+		return fi, nil // refused below
+	}
+	old, group := uidOf(fi), -1
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		group = int(st.Gid)
+	}
+	if err := chown(a, 0, 0); err != nil {
+		return nil, fmt.Errorf("appdata: %s belongs to uid %d, which can change the path to %s; owner root not set: %w", a, old, dir, err)
+	}
+	log.Printf("appdata: %s belonged to uid %d, which could change the path to %s; owner set to root (back: chown %d:%d %s)", a, old, dir, old, group, a)
+	return os.Stat(a)
+}
+
 // Secure checks dir and the path to it and sets what it can:
-//   - every ancestor above the parent belongs to root and is safe;
+//   - every ancestor above the parent belongs to root and is safe; /DATA owned by
+//     someone else is given to root (see dataRoot);
 //   - the parent (e.g. /DATA/AppData) is a real directory of root; when others can
 //     write it, it gets the sticky bit;
 //   - dir is created 0700 when missing; an existing one must be a real directory
@@ -55,6 +88,11 @@ func Secure(dir string) error {
 			fi, err := os.Stat(a)
 			if err != nil {
 				return err
+			}
+			if !trusted(uidOf(fi)) && a == dataRoot {
+				if fi, err = repairOwner(a, fi, dir); err != nil {
+					return err
+				}
 			}
 			if !trusted(uidOf(fi)) || !safe(fi) {
 				return fmt.Errorf("appdata: %s (mode %v, uid %d) lets others change the path to %s", a, fi.Mode(), uidOf(fi), dir)
