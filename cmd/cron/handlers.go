@@ -524,6 +524,14 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
+	if msg := storageErr.Load(); msg != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"status":  "storage_refused",
+			"error":   *msg,
+			"version": version,
+		})
+		return
+	}
 	mu.RLock()
 	total, running := len(tasks), 0
 	var lastExec int64

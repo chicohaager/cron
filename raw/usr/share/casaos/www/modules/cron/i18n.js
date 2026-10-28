@@ -209,6 +209,7 @@ window.CRON_I18N = {
     'error.bad_json': 'The file is not valid JSON.',
     'error.generic': 'Request failed: {msg}',
     'error.offline': 'Backend not reachable — retrying…',
+    'error.storage_refused': 'Cron refuses its data folder, no task runs: {msg}. Cron tries again every 30 s.',
 
     'tpl.backup-appdata.name': 'AppData backup',
     'tpl.backup-appdata.desc': 'Archive /DATA/AppData to /DATA/backups',
@@ -425,6 +426,7 @@ window.CRON_I18N = {
     'error.bad_json': 'Die Datei ist kein gültiges JSON.',
     'error.generic': 'Anfrage fehlgeschlagen: {msg}',
     'error.offline': 'Backend nicht erreichbar — neuer Versuch…',
+    'error.storage_refused': 'Cron verweigert seinen Datenordner, keine Aufgabe läuft: {msg}. Cron versucht es alle 30 s erneut.',
 
     'tpl.backup-appdata.name': 'AppData-Backup',
     'tpl.backup-appdata.desc': '/DATA/AppData nach /DATA/backups archivieren',
@@ -641,6 +643,7 @@ window.CRON_I18N = {
     'error.bad_json': 'Le fichier n’est pas un JSON valide.',
     'error.generic': 'La requête a échoué : {msg}',
     'error.offline': 'Backend injoignable — nouvelle tentative…',
+    'error.storage_refused': 'Cron refuse son dossier de données, aucune tâche ne s’exécute : {msg}. Cron réessaie toutes les 30 s.',
 
     'tpl.backup-appdata.name': 'Sauvegarde AppData',
     'tpl.backup-appdata.desc': 'Archiver /DATA/AppData vers /DATA/backups',
@@ -842,6 +845,7 @@ window.CRON_I18N = {
     'error.bad_json': 'El archivo no es JSON válido.',
     'error.generic': 'La solicitud falló: {msg}',
     'error.offline': 'Backend no accesible: reintentando…',
+    'error.storage_refused': 'Cron rechaza su carpeta de datos y no se ejecuta ninguna tarea: {msg}. Cron lo vuelve a intentar cada 30 s.',
     'tpl.backup-appdata.name': 'Copia de AppData',
     'tpl.backup-appdata.desc': 'Archivar /DATA/AppData en /DATA/backups',
     'tpl.cleanup-tmp.name': 'Limpiar archivos temporales',
@@ -1057,6 +1061,7 @@ window.CRON_I18N = {
     'error.bad_json': '文件不是有效的 JSON。',
     'error.generic': '请求失败：{msg}',
     'error.offline': '后端不可达 — 正在重试…',
+    'error.storage_refused': 'Cron 拒绝使用其数据文件夹，没有任务运行：{msg}。Cron 每 30 秒重试一次。',
 
     'tpl.backup-appdata.name': 'AppData 备份',
     'tpl.backup-appdata.desc': '将 /DATA/AppData 归档到 /DATA/backups',
