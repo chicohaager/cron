@@ -1,6 +1,6 @@
 // Package appdata makes a module's directory under /DATA/AppData safe for root.
 //
-// /DATA/AppData is 0777 without the sticky bit on ZimaOS 1.8 (measured on .184,
+// /DATA/AppData is 0777 without the sticky bit on ZimaOS 1.8 (measured on the second test NAS,
 // 2026-10-26, ZIMAOS-KNOWLEDGE §79.11), and the share of /DATA is writable over
 // SMB: whoever can write there renames root's directory (mode 0700 or not) and
 // puts their own in its place — a wg-quick config with PostUp, a pool.env root
