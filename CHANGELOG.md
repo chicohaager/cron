@@ -4,7 +4,7 @@
 
 ### Fixed
 - A symlinked `/DATA/AppData` (moved to another disk) is followed one step to the real folder,
-  which is then checked up to `/` (lintux-modkit `de33df3`; only a symlink of root is followed); before, it was refused as "not a plain
+  which is then checked up to `/` (lintux-modkit `v0.1.6`; only a symlink of root is followed); before, it was refused as "not a plain
   directory" (forum thread 9566, Tailscale), and the folder behind a symlinked ancestor was not
   checked at all. A chain of symlinks stays refused; a missing folder now says "is missing".
 - On a box whose `/DATA` belonged to the login user (uid 999, also its home) instead of

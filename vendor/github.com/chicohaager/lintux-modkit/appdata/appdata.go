@@ -30,8 +30,8 @@ var trusted = func(uid int) bool { return uid == 0 || uid == os.Geteuid() }
 var parentOK func(string) bool
 
 // dataRoot is the one ancestor Secure repairs: on a ZimaOS 1.8 box /DATA belonged to
-// the login user (uid 999, also its home; measured nas-main, 2026-10-28), on two others to
-// root (nas-test, remote-cube). That owner can rename /DATA/AppData, so the check refuses rightly,
+// the login user (uid 999, also its home; measured on the test NAS, 2026-10-28), on two
+// other boxes to root. That owner can rename /DATA/AppData, so the check refuses rightly,
 // and every module with this guard stopped. Secure gives /DATA back to root (the mode
 // stays) and says so in the log; a symlinked /DATA or an unsafe mode is still refused.
 var dataRoot = "/DATA"
