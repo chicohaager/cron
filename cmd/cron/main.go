@@ -44,7 +44,7 @@ var (
 	// storageErr is why the storage is refused after the wait, nil while it is open.
 	// The server stays up and answers 503 storage_refused with the reason: 0.3.4
 	// exited instead, systemd restarted it 1038 times on a box whose /DATA belonged
-	// to uid 999, no job ran and nothing showed why (nas-main, 2026-10-28).
+	// to uid 999, no job ran and nothing showed why (the test NAS, 2026-10-28).
 	storageErr atomic.Pointer[string]
 	startTime  = time.Now()
 	execSem    = make(chan struct{}, maxConcurrentRuns)
