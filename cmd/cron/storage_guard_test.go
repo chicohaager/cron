@@ -38,7 +38,7 @@ func TestAStorageFolderRootCannotTrustIsRefused(t *testing.T) {
 }
 
 // A storage the guard refuses after the wait: 0.3.4 exited, systemd restarted it
-// 1038 times (nas-main, 2026-10-28, /DATA of uid 999), no job ran and nothing showed
+// 1038 times (the test NAS, 2026-10-28, /DATA of uid 999), no job ran and nothing showed
 // why. Now the server stays up, every API route and /health answer 503
 // storage_refused with the reason, and a fixed folder is picked up without a restart.
 func TestARefusedStorageKeepsTheServerUpAndSaysWhy(t *testing.T) {
