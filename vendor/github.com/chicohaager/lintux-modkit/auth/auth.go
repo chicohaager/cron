@@ -3,7 +3,7 @@
 // issues ES256 JWTs (the web UI keeps one in localStorage.access_token); the
 // gateway proxies module routes without checking them, so every module has
 // to verify the token itself. This package checks the signature against the
-// platform JWKS, the validity window and the issuer.
+// platform JWKS, the validity window, the issuer and the administrator role.
 //
 // It originated in ZFW (github.com/chicohaager/zfw) and moved to cron; the
 // measurements of the ZimaOS token format are recorded in the comments.
@@ -64,6 +64,16 @@ const (
 //	2026-06-12, v1.7.0-beta1: access iss="casaos", refresh iss="refresh"
 //	2026-08-12, v1.7.1-beta1: access iss="zimaos", refresh iss="refresh"
 var sessionIssuers = []string{"casaos", "zimaos"}
+
+// ErrNotAdmin is returned for a valid session whose role is not "admin".
+// Modules run as root and act on the whole box, so only the administrator
+// may use them. ZimaOS 1.8 has sub-accounts (table sub_users next to
+// o_users); the main account's token carries role "admin" (measured on
+// 1.7.0 to 1.8.0). Whatever role a sub-account carries, anything other than
+// exactly "admin" is refused, a missing role included.
+var ErrNotAdmin = errors.New("session role is not admin")
+
+const adminRole = "admin"
 
 func isSessionIssuer(iss string) bool {
 	for _, want := range sessionIssuers {
@@ -396,9 +406,10 @@ func (v *Verifier) Verify(token string) error {
 		return errors.New("payload not decodable")
 	}
 	var claims struct {
-		Iss string `json:"iss"`
-		Exp int64  `json:"exp"`
-		Nbf int64  `json:"nbf"`
+		Iss  string          `json:"iss"`
+		Exp  int64           `json:"exp"`
+		Nbf  int64           `json:"nbf"`
+		Role json.RawMessage `json:"role"`
 	}
 	if err := json.Unmarshal(plRaw, &claims); err != nil {
 		return errors.New("payload not readable")
@@ -415,6 +426,10 @@ func (v *Verifier) Verify(token string) error {
 	}
 	if claims.Nbf != 0 && now.Add(clockSkew).Unix() < claims.Nbf {
 		return errors.New("token not yet valid (nbf)")
+	}
+	var role string
+	if json.Unmarshal(claims.Role, &role) != nil || role != adminRole {
+		return fmt.Errorf("%w (role %.40q)", ErrNotAdmin, string(claims.Role))
 	}
 	return nil
 }
@@ -471,8 +486,9 @@ func clientAddr(r *http.Request) string {
 }
 
 // Middleware wraps next so every request must carry a valid ZimaOS bearer
-// token. Failures answer 401 with a JSON body {"error","code"} so the UI
-// can tell an expired session from a missing one.
+// token of the administrator. Failures answer 401 with a JSON body
+// {"error","code"} so the UI can tell an expired session from a missing one;
+// a valid session of another role answers 403 with code "auth_forbidden".
 func (v *Verifier) Middleware(next http.Handler) http.Handler {
 	if v.disabled {
 		return next
@@ -486,6 +502,10 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 		}
 		if err := v.Verify(token); err != nil {
 			v.logReject(r, err.Error())
+			if errors.Is(err, ErrNotAdmin) {
+				writeAuthError(w, http.StatusForbidden, "auth_forbidden", "only the ZimaOS administrator may use this module")
+				return
+			}
 			unauthorized(w, "auth_invalid", "invalid session: "+err.Error())
 			return
 		}
@@ -494,8 +514,12 @@ func (v *Verifier) Middleware(next http.Handler) http.Handler {
 }
 
 func unauthorized(w http.ResponseWriter, code, msg string) {
+	writeAuthError(w, http.StatusUnauthorized, code, msg)
+}
+
+func writeAuthError(w http.ResponseWriter, status int, code, msg string) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": code})
 }
 
