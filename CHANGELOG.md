@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.3.5 — unreleased
+## 0.3.5 — 2026-11-20
+
+### Changed
+- Built with Go 1.27.4.
 
 ### Fixed
 - A symlinked `/DATA/AppData` (moved to another disk) is followed one step to the real folder,
